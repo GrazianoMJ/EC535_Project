@@ -200,3 +200,6 @@ fabric.properties
 ## Android Studio Again ##
 # Ignore ./idea
 *.idea/
+
+## Android App build directory ##
+android/app/build
