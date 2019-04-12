@@ -30,7 +30,7 @@ public class VoiceCommand {
         public CommandOp(CommandName commandName, int wordIndex) {
             mWordIndex = wordIndex;
             mCommandName = commandName;
-            mIsValid = false;
+            mIsValid = true;
         }
 
         public CommandName getCommandName() {
@@ -63,13 +63,13 @@ public class VoiceCommand {
             // Null constructor
             mArgument = 0;
             mWordIndex = 0;
-            isValid = true;
+            isValid = false;
         }
 
         public CommandArgument(int argument, int wordIndex) {
             mArgument = argument;
             mWordIndex = wordIndex;
-            isValid = false;
+            isValid = true;
         }
 
         public int getArgument() {
@@ -115,17 +115,16 @@ public class VoiceCommand {
     }
 
     public static CommandOp getCommandOp(ArrayList<String> stringList) {
-        int wordIndex = 0;
         if (stringList.size() <= 0)
             return new CommandOp();
-        for (wordIndex = 0; wordIndex < stringList.size(); wordIndex++) {
+        for (int wordIndex = 0; wordIndex < stringList.size(); wordIndex++) {
             if (stringList.get(wordIndex).toLowerCase().contains("fire"))
                 return new CommandOp(CommandName.FIRE, wordIndex);
             else if (stringList.get(wordIndex).toLowerCase().contains("prime"))
                 return new CommandOp(CommandName.PRIME, wordIndex);
-            else if (stringList.get(wordIndex).equalsIgnoreCase("up"))
+            else if (stringList.get(wordIndex).toLowerCase().contains("up"))
                 return new CommandOp(CommandName.TILT_UP, wordIndex);
-            else if (stringList.get(wordIndex).equalsIgnoreCase("down"))
+            else if (stringList.get(wordIndex).toLowerCase().contains("down"))
                 return new CommandOp(CommandName.TILT_DOWN, wordIndex);
             wordIndex += 1;
         }
@@ -156,7 +155,7 @@ public class VoiceCommand {
         CommandOp op = VoiceCommand.getCommandOp(stringList);
         CommandArgument arg = VoiceCommand.getCommandArgument(
                 stringList, op.getWordIndex());
-        if (op.isValid() && (!op.shouldHaveAnArgument() || arg.isValid())) {
+        if (!op.isValid() || (op.shouldHaveAnArgument() && !arg.isValid())) {
             return new VoiceCommand();
         } else {
             return new VoiceCommand(op, arg);
