@@ -1,6 +1,7 @@
 package org.ec535.dmgturret;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
@@ -22,6 +23,7 @@ import android.widget.EditText;
 import android.widget.TextView;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 
 public class TurretControlActivity extends AppCompatActivity implements RecognitionListener {
 
@@ -31,6 +33,14 @@ public class TurretControlActivity extends AppCompatActivity implements Recognit
     private SpeechRecognizer mSpeechRecognizer;
     private static final int PERMISSIONS_REQUEST_RECORD_AUDIO_ID = 300;
     private static final String TAG = TurretControlActivity.class.getName();
+
+    private enum CommandOP {
+        FIRE,
+        PRIME,
+        TILT_UP,
+        TILT_DOWN,
+        INVALID
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -210,8 +220,39 @@ public class TurretControlActivity extends AppCompatActivity implements Recognit
         mSpeechRecognizer.startListening(mSpeechIntent);
     }
 
+    protected ArrayList<String> getWordList(ArrayList<String> sentenceList) {
+        // returns flattened list of words from sentences
+        ArrayList<String> output = new ArrayList<>();
+        for (String str : sentenceList) {
+            output.addAll(Arrays.asList(str.split(" ")));
+        }
+        return output;
+    }
+
+    @SuppressLint({"DefaultLocale", "SetTextI18n"})
     protected void tryProcessVoiceInput(ArrayList<String> voiceInput) {
-        // TODO: Add logic for handling voice input
+        VoiceCommand cmd = VoiceCommand.getCommand(
+                getWordList(voiceInput)
+        );
+        switch (cmd.getCommandName()) {
+            case FIRE:
+                mTextBox.setText("Fire payload");
+                break;
+            case PRIME:
+                mTextBox.setText("Prime payload");
+                break;
+            case TILT_UP:
+                mTextBox.setText(String.format("Tilt turret up by %d degree(s)",
+                        cmd.getArgument()));
+                break;
+            case TILT_DOWN:
+                mTextBox.setText(String.format("Tilt turret down by %d degree(s)",
+                        cmd.getArgument()));
+                break;
+            case INVALID:
+                mTextBox.setText("Invalid command");
+                break;
+        }
     }
 
     @Override
@@ -230,7 +271,7 @@ public class TurretControlActivity extends AppCompatActivity implements Recognit
                 strBuilder.append(voiceCaptures.get(i));
             }
         }
-        mTextBox.setText(strBuilder.toString());
+        // mTextBox.setText(strBuilder.toString());
         tryProcessVoiceInput(voiceCaptures);
         mSpeechRecognizer.startListening(mSpeechIntent);
     }
