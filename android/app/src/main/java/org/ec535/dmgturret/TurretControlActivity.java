@@ -392,6 +392,14 @@ public class TurretControlActivity extends AppCompatActivity
                 mTextBox.setText(String.format("Tilt turret down by %d degree(s)",
                         cmd.getArgument()));
                 break;
+            case ROTATE_LEFT:
+                mTextBox.setText(String.format("Rotate turret left by %d degree(s)",
+                        cmd.getArgument()));
+                break;
+            case ROTATE_RIGHT:
+                mTextBox.setText(String.format("Rotate turret right by %d degree(s)",
+                        cmd.getArgument()));
+                break;
             case INVALID:
                 mTextBox.setText("Invalid command");
                 break;

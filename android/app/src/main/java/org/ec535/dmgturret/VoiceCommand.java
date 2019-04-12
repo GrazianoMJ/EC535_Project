@@ -8,7 +8,9 @@ public class VoiceCommand {
         PRIME ((byte) 1),
         TILT_UP ((byte) 2),
         TILT_DOWN ((byte) 3),
-        INVALID ((byte) 4);
+        ROTATE_LEFT ((byte) 4),
+        ROTATE_RIGHT ((byte) 5),
+        INVALID ((byte) 6);
 
         private byte mValue;
 
@@ -62,6 +64,7 @@ public class VoiceCommand {
 
 
     }
+
     private static class CommandArgument {
         private int mArgument;
         // this argument's index within the word list
@@ -143,6 +146,10 @@ public class VoiceCommand {
                 return new CommandOp(CommandName.TILT_UP, wordIndex);
             else if (stringList.get(wordIndex).toLowerCase().contains("down"))
                 return new CommandOp(CommandName.TILT_DOWN, wordIndex);
+            else if (stringList.get(wordIndex).toLowerCase().contains("left"))
+                return new CommandOp(CommandName.ROTATE_LEFT, wordIndex);
+            else if (stringList.get(wordIndex).toLowerCase().contains("right"))
+                return new CommandOp(CommandName.ROTATE_RIGHT, wordIndex);
             wordIndex += 1;
         }
         return new CommandOp();
