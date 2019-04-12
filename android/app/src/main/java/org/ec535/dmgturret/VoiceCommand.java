@@ -4,11 +4,21 @@ import java.util.ArrayList;
 
 public class VoiceCommand {
     public enum CommandName {
-        FIRE,
-        PRIME,
-        TILT_UP,
-        TILT_DOWN,
-        INVALID
+        FIRE ((byte) 0),
+        PRIME ((byte) 1),
+        TILT_UP ((byte) 2),
+        TILT_DOWN ((byte) 3),
+        INVALID ((byte) 4);
+
+        private byte mValue;
+
+        CommandName(byte value) {
+            mValue = value;
+        }
+
+        byte getId() {
+            return mValue;
+        }
     }
 
     private static class CommandOp {
@@ -112,6 +122,13 @@ public class VoiceCommand {
 
     public CommandName getCommandName() {
         return mCommandOp.getCommandName();
+    }
+
+    public byte[] toBytes() {
+        byte[] output = new byte[2];
+        output[0] = mCommandOp.getCommandName().getId();
+        output[1] = (byte) mArgument.getArgument();
+        return output;
     }
 
     public static CommandOp getCommandOp(ArrayList<String> stringList) {

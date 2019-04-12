@@ -2,7 +2,14 @@ package org.ec535.dmgturret;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.speech.RecognitionListener;
@@ -13,6 +20,7 @@ import android.support.design.widget.FloatingActionButton;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
+import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
@@ -21,18 +29,71 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.UUID;
 
-public class TurretControlActivity extends AppCompatActivity implements RecognitionListener {
+public class TurretControlActivity extends AppCompatActivity
+        implements RecognitionListener, IBluetoothSetupEventListener {
 
     private EditText mTextBox;
     private TextView mLabel;
     private Intent mSpeechIntent;
+    private boolean mTurrentConnected;
     private SpeechRecognizer mSpeechRecognizer;
+    private BluetoothAdapter mBluetoothAdapter;
+    private BluetoothDevice mTurretBluetoothDevice;
+    private BluetoothClient mBluetoothClient;
+    private BluetoothConnector mBluetoothConnector;
+    private static final String TURRET_MAC_ADDRESS = "??";
+    private static final String TURRET_DEVICE_NAME = "";
+    private static final int REQUEST_ENABLE_BT_ID = 299;
     private static final int PERMISSIONS_REQUEST_RECORD_AUDIO_ID = 300;
+    private static final UUID TURRET_UUID = UUID.fromString("97d3edd0-5d56-11e9-b475-0800200c9a66");
     private static final String TAG = TurretControlActivity.class.getName();
+
+    private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (BluetoothDevice.ACTION_FOUND.equals(action)) {
+                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                String deviceName = device.getName();
+                String deviceMAC = device.getAddress();
+                Log.d(TAG, String.format("Discovered %s %s over Bluetooth",
+                        deviceName, deviceMAC));
+                if (deviceName != null && deviceName.equals(TURRET_DEVICE_NAME)) {
+                    mTurretBluetoothDevice = device;
+                    Log.d(TAG, String.format(
+                            "Discovered turret \"%s\" with MAC address %s",
+                            deviceName, deviceMAC));
+                    Log.d(TAG, "Stopping bluetooth discovery..");
+                    mBluetoothAdapter.cancelDiscovery();
+                    Log.d(TAG, String.format("Connecting to turret %s:%s",
+                            device.getName(), device.getAddress()));
+                    connectToTurret();
+                }
+
+            }
+        }
+    };
+
+    @Override
+    public void onConnectionFailed(String reason) {
+        // TODO: retry?
+    }
+
+    @Override
+    public void onBluetoothConnected(BluetoothSocket socket) {
+        // create bluetooth client to establish connection with turret
+        Log.d(TAG, String.format("Connected to turret %s:%s",
+                mTurretBluetoothDevice.getName(), mTurretBluetoothDevice.getAddress()));
+        mBluetoothClient = new BluetoothClient(socket, mTurretBluetoothDevice, TAG);
+        Log.d(TAG, "Spawning bluetooth client thread..");
+        mBluetoothClient.run();
+    }
 
     private enum CommandOP {
         FIRE,
@@ -40,6 +101,15 @@ public class TurretControlActivity extends AppCompatActivity implements Recognit
         TILT_UP,
         TILT_DOWN,
         INVALID
+    }
+
+    protected void connectToTurret() {
+        if (mTurretBluetoothDevice == null)
+            return;
+        mBluetoothConnector = new BluetoothConnector(
+                mTurretBluetoothDevice,
+                TURRET_UUID, TAG, this);
+        mBluetoothConnector.start();
     }
 
     @Override
@@ -58,10 +128,21 @@ public class TurretControlActivity extends AppCompatActivity implements Recognit
                         .setAction("Action", null).show();
             }
         });
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                Log.e(TAG, "Fatal uncaught exception " + e.toString());
+            }
+        });
         mTextBox = (EditText) findViewById(R.id.textBox);
         mLabel = (TextView) findViewById(R.id.textLabel);
         mLabel.setText(R.string.label1);
         // check if we have permissions for recording user audio
+        /**
+         * ==================================
+         * SPEECH RECOGNITION SETUP
+         * ==================================
+         */
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             // We don't have permissions for this run
@@ -82,7 +163,54 @@ public class TurretControlActivity extends AppCompatActivity implements Recognit
             Log.d(TAG, "Setting up speech recognition");
             setupSpeechRecognition();
         }
+        /**
+         * ===================================
+         *  BLUETOOTH SETUP
+         *  ==================================
+         */
+        mBluetoothClient = null;
+        mBluetoothConnector = null;
+        // Register for device found broadcasts over bluetooth
+        IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
+        registerReceiver(mBroadcastReceiver, filter);
+        // Make sure bluetooth is enabled
+        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        if (mBluetoothAdapter == null) {
+            // TDOO: exit app?
+            Log.d(TAG, "Device has not bluetooth support");
+        }
+        if (mBluetoothAdapter.isEnabled()) {
+            startBluetoothScan();
+        } else {
+            Log.d(TAG, "Requesting user enable bluetooth adapter..");
+            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT_ID);
+        }
+    }
 
+    protected void startBluetoothScan() {
+        // start scanning for the turret device
+        boolean devScanStarted = mBluetoothAdapter.startDiscovery();
+        if (devScanStarted) {
+            Log.d(TAG, "Bluetooth scanning started..");
+            Toast.makeText(this, "Scanning for turret", Toast.LENGTH_LONG).show();
+        } else {
+            Log.d(TAG, "Failed to start bluetooth discovery");
+            // TODO: show error or allow user to try again
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_ENABLE_BT_ID) {
+            if (resultCode == RESULT_OK) {
+                Log.d(TAG, "Bluetooth enabled by user");
+                startBluetoothScan();
+            } else if (resultCode == RESULT_CANCELED) {
+                // TDOO: Handle cancellation by user
+                Log.d(TAG, "Bluetooth disabled by user");
+            }
+        }
     }
 
     protected void setupSpeechRecognition() {
@@ -220,6 +348,21 @@ public class TurretControlActivity extends AppCompatActivity implements Recognit
         mSpeechRecognizer.startListening(mSpeechIntent);
     }
 
+    protected void initializeBluetooth() throws Exception {
+        BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        if (bluetoothAdapter == null) {
+            Toast.makeText(this,
+                    "Bluetooth adapter not available",
+                    Toast.LENGTH_SHORT).show();
+            Log.d(TAG, "initializeBluetooth: No bluetooth adapter available");
+            throw new Exception("No bluetooth adapter detected");
+        }
+        if (!bluetoothAdapter.isEnabled()) {
+            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT_ID);
+        }
+    }
+
     protected ArrayList<String> getWordList(ArrayList<String> sentenceList) {
         // returns flattened list of words from sentences
         ArrayList<String> output = new ArrayList<>();
@@ -253,6 +396,10 @@ public class TurretControlActivity extends AppCompatActivity implements Recognit
                 mTextBox.setText("Invalid command");
                 break;
         }
+        // send command to turret
+        if (mBluetoothClient != null) {
+            mBluetoothClient.write(cmd.toBytes());
+        }
     }
 
     @Override
@@ -274,6 +421,12 @@ public class TurretControlActivity extends AppCompatActivity implements Recognit
         // mTextBox.setText(strBuilder.toString());
         tryProcessVoiceInput(voiceCaptures);
         mSpeechRecognizer.startListening(mSpeechIntent);
+    }
+
+    protected void onDestroy() {
+        super.onDestroy();
+        // Unregister broadcast receiver
+        unregisterReceiver(mBroadcastReceiver);
     }
 
     @Override
