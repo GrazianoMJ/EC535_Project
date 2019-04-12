@@ -58,10 +58,9 @@ public class VoiceCommand {
         }
 
         public boolean shouldHaveAnArgument() {
-            return mCommandName == CommandName.TILT_UP
-                    || mCommandName == CommandName.TILT_DOWN;
+            return mCommandName != CommandName.FIRE
+                    && mCommandName != CommandName.PRIME;
         }
-
 
     }
 
@@ -150,7 +149,6 @@ public class VoiceCommand {
                 return new CommandOp(CommandName.ROTATE_LEFT, wordIndex);
             else if (stringList.get(wordIndex).toLowerCase().contains("right"))
                 return new CommandOp(CommandName.ROTATE_RIGHT, wordIndex);
-            wordIndex += 1;
         }
         return new CommandOp();
     }
@@ -167,7 +165,6 @@ public class VoiceCommand {
                 argument = Integer.parseInt(stringList.get(wordIndex));
                 break;
             } catch (NumberFormatException ignored) { }
-            wordIndex += 1;
         }
         if (argument >= 0)
             return new CommandArgument(argument, wordIndex);
