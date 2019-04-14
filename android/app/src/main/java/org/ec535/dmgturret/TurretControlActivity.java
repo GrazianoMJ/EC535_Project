@@ -54,7 +54,7 @@ public class TurretControlActivity extends AppCompatActivity
     private static final String TURRET_MAC_ADDRESS = "E8:2A:EA:4A:04:FB";
     private static final int REQUEST_ENABLE_BT_ID = 299;
     private static final int PERMISSIONS_REQUEST_RECORD_AUDIO_ID = 300;
-    private static final UUID TURRET_UUID = UUID.fromString("1e0ca4ea-299d-4335-93eb-27fcfe7fa848");
+    private static final UUID TURRET_UUID = UUID.fromString("ce025ea4-00d6-44f3-ae1c-a5cba97381fd");
     private static final String TAG = TurretControlActivity.class.getName();
 
 
