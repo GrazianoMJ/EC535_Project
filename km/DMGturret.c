@@ -4,8 +4,10 @@
 #include <linux/slab.h> /* kmalloc() */
 #include <linux/fs.h> /* everything... */
 #include <linux/errno.h> /* error codes */
-#include <linux/types.h> /* size_t */
-#include <linux/timer.h> /* timer functions */
+#include <linux/types.h> /* size_t */ 
+#include <linux/time.h> /* timespec struct */
+#include <linux/hrtimer.h> /* high res timer */
+#include <linux/ktime.h> /* ktime structure */
 #include <asm/uaccess.h> /* copy_from/to_user */
 #include <asm/hardware.h>
 #include <asm/gpio.h>
@@ -27,8 +29,7 @@ static int DMGturret_release(struct inode *inode, struct file *filp);
 static void DMGturret_exit(void);
 
 /* Declare Function Prototypes - Auxiliary Operations */
-static int pwm_setup(unsigned gpio);
-static void modify_pwm(unsigned gpio, uint8_t state, bool active);
+enum hrtimer_restart example_callback (struct hrtimer *timer);
 
 /* Set File Access Functions */
 struct file_operations DMGturret_fops = {
@@ -54,48 +55,27 @@ static char *read_buffer;
 static int write_len;
 static int read_len;
 
-static int
-pwm_setup(unsigned gpio)
-{
-	// Check gpio to verify if it is PWM compatible
-	// Set up PWM if valid
-	if (gpio == GPIO16_PWM0) {
-		CKEN |= CKEN0_PWM0;
-		pxa_gpio_mode(GPIO16_PWM0_MD);
-		PWM_CTRL0 |= 0x3f;
-		PWM_PERVAL0 |= 0x3ff;
-		modify_pwm(gpio, brightness_state, counter_value & 0x01);
-	} else if (gpio == GPIO17_PWM1) {
-		CKEN |= CKEN1_PWM1;
-		pxa_gpio_mode(GPIO17_PWM1_MD);
-		PWM_CTRL1 |= 0x3f;
-	        PWM_PERVAL1 |= 0x3ff;
-		modify_pwm(gpio, brightness_state, counter_value & 0x01);
-	} else {
-		return -EINVAL;
-	}
+/* High Resolution Timers for PWM */
+static struct hrtimer hr_timer;
 
-	return 0;
-}
-
-static void
-modify_pwm(unsigned gpio, uint8_t state, bool active)
+enum hrtimer_restart 
+example_callback (struct hrtimer *timer)
 {
-	// Precondition: GPIO 16 or 17 is confirmed and set up.
-	if (gpio == GPIO16_PWM0) 
-		PWM_PWDUTY0 = (!active)        ? 0              :
-			      (state % 3 == 0) ? MAX_BRIGHTNESS :
-			      (state % 3 == 1) ? MID_BRIGHTNESS : MIN_BRIGHTNESS;
-	else if (gpio == GPIO17_PWM1)
-		PWM_PWDUTY1 = (!active)        ? 0              :
-		  	      (state % 3 == 0) ? MAX_BRIGHTNESS :
-			      (state % 3 == 1) ? MID_BRIGHTNESS : MIN_BRIGHTNESS;
+	ktime_t new_value = ktime_set (5, 0), time_delta;
+	printk(KERN_INFO "Callback activated. The expiration value saved as %d seconds & %d nanoseconds \n", timer->expires.tv.sec, timer->expires.tv.nsec);
+	time_delta = ktime_add(timer->expires, new_value);
+	printk(KERN_INFO "The updated value will be %d seconds & %d nanoseconds \n", time_delta.tv.sec, time_delta.tv.nsec);
+	timer->expires = ktime_add(timer->expires, new_value);
+	return HRTIMER_RESTART;
 }
 
 static int
 DMGturret_init(void)
 {
+	ktime_t expires;
 	int result;
+
+	printk(KERN_INFO "Installing module...\n");
 
 	/* Register Device */
 	result = register_chrdev(DMGturret_major, DEV_NAME, &DMGturret_fops);
@@ -124,6 +104,12 @@ DMGturret_init(void)
 	memset(read_buffer, 0, READ_BUFFER_SIZE);
 	read_len = 0;
 
+	/* Initialize High Resolution Timer */
+	expires = ktime_set (5, 0);
+	hrtimer_init(&hr_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hr_timer.function = &example_callback;
+	hrtimer_start(&hr_timer, expires, HRTIMER_MODE_REL);
+
 	return 0;
 
 fail:
@@ -143,13 +129,6 @@ DMGturret_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 	return 0;
 }
 
-/*
- * Set counter state through the device interface.
- *
- * Write fH, fM, or fL for high, medium, and low frequency timers.
- *
- * Write v0 through vf to set the counter value to 0 through 15.
- */
 static ssize_t
 DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 {
@@ -165,6 +144,8 @@ DMGturret_release(struct inode *inode, struct file *filp)
 static void
 DMGturret_exit(void)
 {
+	int ret;
+
 	/* Free Major Number */
 	unregister_chrdev(DMGturret_major, DEV_NAME);
 
@@ -179,4 +160,9 @@ DMGturret_exit(void)
 	{
 		kfree(write_buffer);
 	}
+	
+	/* Cancel High Resolution Timer */
+	ret = hrtimer_cancel( &hr_timer);
+	if (ret) printk(KERN_INFO "The timer was running when shut down.\n");
+	printk(KERN_INFO "...module removed!\n");
 }
