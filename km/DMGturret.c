@@ -20,6 +20,8 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define READ_BUFFER_SIZE (128)
 #define DEV_NAME "DMGturret"
 #define US_TO_NS(x) (x * 1E3L)
+#define PWM_PERIOD 20*1E3L /* 20000 US */
+#define PAN_SERVO 29
 
 /* Declare Function Prototypes - Module File Operations */
 static int DMGturret_init(void);
@@ -37,6 +39,15 @@ unsigned long hrtimer_forward(struct hrtimer *timer, ktime_t now, ktime_t interv
 
 /* Declare Function Prototypes - Auxiliary Operations */
 enum hrtimer_restart pan_pwm_callback (struct hrtimer *timer);
+static bool parse_uint(const char *buf, uint32_t* num);
+static bool set_pulse_width(int index);
+#ifndef SIM_MODE
+#   define PWM_PULSE_ON(servo) pxa_gpio_set_value(servo, 1)
+#   define PWM_PULSE_OFF(servo) pxa_gpio_set_value(servo, 0)
+#else
+    static void PWM_PULSE_ON(uint8_t servo);
+    static void PWM_PULSE_OFF(uint8_t servo);
+#endif
 
 /* Set File Access Functions */
 struct file_operations DMGturret_fops = {
@@ -66,13 +77,21 @@ static int read_len;
 static struct hrtimer pan_pwm;
 
 /* Holds Pan Servo State */
-static bool pan_servo_state = false;
+static uint8_t pan_servo_state = 0;
+#ifdef SIM_MODE
+   static void PWM_PULSE_ON(uint8_t servo) { pan_servo_state = 1; }
+   static void PWM_PULSE_OFF(uint8_t servo) { pan_servo_state = 0; }
+#endif
 
-/* Holds Pan Servo Pulse Width */
+/* Holds Pan Servo Pulse Width & Period */
 static ktime_t pan_servo_pulse;
+static ktime_t pan_servo_period;
 
-/* Holds the Overall Period */
+/* Holds Universal PWM Period */
 static ktime_t pwm_period;
+
+/* Holds the Pulse Width Values */
+static ktime_t PWM_STATES[3];
 
 /* Missing Library Operation Definitions */
 /**
@@ -180,35 +199,48 @@ hrtimer_forward(struct hrtimer *timer, ktime_t now, ktime_t interval)
 }
 
 /* Auxiliary Function Definitions */
-//enum hrtimer_restart
-//pan_pwm_callback (struct hrtimer *timer)
-//{
-//	ktime_t currtime, interval;
-//	currtime = ktime_get();
-//	interval = ktime_set(5, 0);
-//	printk(KERN_INFO "Callback activated. The expiration value saved as %d seconds & %d nanoseconds \n", timer->expires.tv.sec, timer->expires.tv.nsec);
-//	printk(KERN_INFO "The current time when entering this function is save as %d seconds & %d nanoseconds \n", currtime.tv.sec, currtime.tv.nsec);
-//	hrtimer_forward(timer, currtime, interval);
-//	printk(KERN_INFO "The updated value will be %d seconds & %d nanoseconds \n", timer->expires.tv.sec, timer->expires.tv.nsec);
-//	return HRTIMER_RESTART;
-//}
-
 enum hrtimer_restart
 pan_pwm_callback (struct hrtimer *timer)
 {
-	ktime_t currtime, interval;
-	
+	ktime_t currtime;
+#ifdef SIM_MODE	
 	printk(KERN_INFO "Callback activated. The pan servo is currently %s and the expiration value saved as %d seconds & %d nanoseconds \n", ((pan_servo_state) ? "On" : "Off"), timer->expires.tv.sec, timer->expires.tv.nsec);
+#endif
 	currtime = ktime_get();
 	if (pan_servo_state) {
-		interval = ktime_sub(pwm_period, pan_servo_pulse);
-		hrtimer_forward(timer, currtime, interval);
+		hrtimer_forward(timer, currtime, pan_servo_period);
 	} else {
+		pan_servo_period = ktime_sub(pwm_period, pan_servo_pulse);
 		hrtimer_forward(timer, currtime, pan_servo_pulse);
 	}
-	pan_servo_state = !pan_servo_state;
+	(pan_servo_state) ? PWM_PULSE_OFF(PAN_SERVO) : PWM_PULSE_ON(PAN_SERVO);
+#ifdef SIM_MODE
 	printk(KERN_INFO "The pan servo is now set to %s and the next expiration is %d seconds & %d nanoseconds \n", ((pan_servo_state) ? "On" : "Off"), timer->expires.tv.sec, timer->expires.tv.nsec);
+#endif
 	return HRTIMER_RESTART;
+}
+
+static bool
+parse_uint(const char* buf, uint32_t* num)
+{
+	char* endptr;
+	if (num == NULL)
+		return false;
+	*num = simple_strtol(buf, &endptr, 10);
+	if (endptr != buf)
+		return true;
+	return false;
+}
+
+static bool
+set_pulse_width(int index)
+{
+	if (index < 0 || index > 2)
+	{
+		return false;
+	}
+	pan_servo_pulse = ktime_set(PWM_STATES[index].tv.sec, PWM_STATES[index].tv.nsec);
+	return true;
 }
 
 /* Module File Operation Definitions */
@@ -224,6 +256,13 @@ DMGturret_init(void)
 	if (result < 0)
 	{
 		return result;
+	}
+
+	result = gpio_request(PAN_SERVO, "PAN_SERVO")
+                || gpio_direction_output(PAN_SERVO, 0);
+	if (result != 0)
+	{
+		goto fail;
 	}
 
 	/* Allocate Write Buffer Memory */
@@ -246,9 +285,29 @@ DMGturret_init(void)
 	memset(read_buffer, 0, READ_BUFFER_SIZE);
 	read_len = 0;
 
+#ifdef SIM_MODE
+	/* Initialzie the Universal PWM Period */
+	pwm_period = ktime_set(10, 0);
+
+	/* Initialize the Pulse Width States */
+	PWM_STATES[0] = ktime_set(3, 0);
+	PWM_STATES[1] = ktime_set(5, 0);
+	PWM_STATES[2] = ktime_set(7, 0);
+#else
+	/* Initialzie the Universal PWM Period */
+	pwm_period = ktime_set(0, US_TO_NS(PWM_PERIOD));
+
+	/* Initialize the Pulse Width States */
+	PWM_STATES[0] = ktime_set(0, US_TO_NS(1000));
+	PWM_STATES[1] = ktime_set(0, US_TO_NS(1500));
+	PWM_STATES[2] = ktime_set(0, US_TO_NS(2000));
+#endif
+
+	/* Initialize pan_servo_variables */
+	pan_servo_pulse = ktime_set(PWM_STATES[1].tv.sec, PWM_STATES[1].tv.nsec);
+	pan_servo_period = ktime_sub(pwm_period, pan_servo_pulse);
+
 	/* Initialize High Resolution Timer */
-	pan_servo_pulse = ktime_set (2, 0);
-	pwm_period = ktime_set (5, 0);
 	hrtimer_init(&pan_pwm, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	pan_pwm.function = &pan_pwm_callback;
 	hrtimer_start(&pan_pwm, pwm_period, HRTIMER_MODE_REL);
@@ -275,7 +334,20 @@ DMGturret_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 static ssize_t
 DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 {
-	return 0;
+	uint32_t value;
+	if (count > WRITE_BUFFER_SIZE)
+		count = WRITE_BUFFER_SIZE;
+	if (copy_from_user(write_buffer, buf, count))
+		return -EINVAL;
+	if (count - 1 != 2)
+		return -EINVAL;
+	if (write_buffer[0] == 'p')
+	{
+		if (!parse_uint(write_buffer + 1, &value) || !set_pulse_width(value)) {
+			return -EINVAL;
+		}
+	}
+	return count;
 }
 static int
 DMGturret_release(struct inode *inode, struct file *filp)
