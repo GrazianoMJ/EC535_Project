@@ -28,6 +28,12 @@ static ssize_t DMGturret_write(struct file *filp, const char *buf, size_t count,
 static int DMGturret_release(struct inode *inode, struct file *filp);
 static void DMGturret_exit(void);
 
+/* Declare Function Prototypes - Missing Library Operations */
+ktime_t ktime_get(void);
+ktime_t ktime_add_ns(const ktime_t kt, u64 nsec);
+unsigned long ktime_divns(const ktime_t kt, s64 div);
+unsigned long hrtimer_forward(struct hrtimer *timer, ktime_t now, ktime_t interval);
+
 /* Declare Function Prototypes - Auxiliary Operations */
 enum hrtimer_restart example_callback (struct hrtimer *timer);
 
@@ -58,14 +64,135 @@ static int read_len;
 /* High Resolution Timers for PWM */
 static struct hrtimer hr_timer;
 
-enum hrtimer_restart 
+/* Missing Library Operation Definitions */
+
+/**
+ * ktime_get - get the monotonic time in ktime_t format
+ *
+ * returns the time in ktime_t format
+ */
+ktime_t
+ktime_get (void) {
+	struct timespec now;
+	ktime_get_ts(&now);
+	return timespec_to_ktime(now);
+}
+
+/**
+ * ktime_add_ns - Add a scalar nanoseconds value to a ktime_t variable
+ * @kt:         addend
+ * @nsec:       the scalar nsec value to add
+ *
+ * Returns the sum of kt and nsec in ktime_t format
+ */
+ktime_t
+ktime_add_ns(const ktime_t kt, u64 nsec)
+{
+	ktime_t tmp;
+
+	if (likely(nsec < NSEC_PER_SEC)) {
+		tmp.tv64 = nsec;
+	} else {
+		unsigned long rem = do_div(nsec, NSEC_PER_SEC);
+
+		tmp = ktime_set((long)nsec, rem);
+	}
+
+	return ktime_add(kt, tmp);
+}
+
+/*
+ * Divide a ktime value by a nanosecond value
+ */
+unsigned long
+ktime_divns(const ktime_t kt, s64 div)
+{
+	u64 dclc, inc, dns;
+	int sft = 0;
+
+	dclc = dns = ktime_to_ns(kt);
+	inc = div;
+	/* Make sure the divisor is less than 2^32: */
+	while (div >> 32) {
+		sft++;
+		div >>= 1;
+	}
+	dclc >>= sft;
+	do_div(dclc, (unsigned long) div);
+
+	return (unsigned long) dclc;
+}
+
+/**
+ * hrtimer_forward - forward the timer expiry
+ * @timer:	hrtimer to forward
+ * @now:	forward past this time
+ * @interval:	the interval to forward
+ *
+ * Forward the timer expiry so it will expire in the future.
+ * Returns the number of overruns.
+ */
+unsigned long
+hrtimer_forward(struct hrtimer *timer, ktime_t now, ktime_t interval)
+{
+	unsigned long orun = 1;
+	ktime_t delta;
+
+	delta = ktime_sub(now, timer->expires);
+
+	if (delta.tv64 < 0)
+		return 0;
+
+	if (interval.tv64 < timer->base->resolution.tv64)
+		interval.tv64 = timer->base->resolution.tv64;
+
+	if (unlikely(delta.tv64 >= interval.tv64)) {
+		s64 incr = ktime_to_ns(interval);
+
+		orun = ktime_divns(delta, incr);
+		timer->expires = ktime_add_ns(timer->expires, incr * orun);
+		if (timer->expires.tv64 > now.tv64)
+			return orun;
+		/*
+		 * This (and the ktime_add() below) is the
+		 * correction for exact:
+		 */
+		orun++;
+	}
+	timer->expires = ktime_add(timer->expires, interval);
+	/*
+	 * Make sure, that the result did not wrap with a very large
+	 * interval.
+	 */
+	if (timer->expires.tv64 < 0)
+		timer->expires = ktime_set(KTIME_SEC_MAX, 0);
+
+	return orun;
+}
+
+/* Auxiliary Function Definition Section */
+
+//enum hrtimer_restart 
+//example_callback (struct hrtimer *timer)
+//{
+//	ktime_t new_value = ktime_set (5, 0), time_delta;
+//	printk(KERN_INFO "Callback activated. The expiration value saved as %d seconds & %d nanoseconds \n", timer->expires.tv.sec, timer->expires.tv.nsec);
+//	time_delta = ktime_add(timer->expires, new_value);
+//	printk(KERN_INFO "The updated value will be %d seconds & %d nanoseconds \n", time_delta.tv.sec, time_delta.tv.nsec);
+//	timer->expires = ktime_add(timer->expires, new_value);
+//	return HRTIMER_RESTART;
+//}
+
+enum hrtimer_restart
 example_callback (struct hrtimer *timer)
 {
-	ktime_t new_value = ktime_set (5, 0), time_delta;
+	ktime_t currtime, interval;
+	currtime = ktime_get();
+	interval = ktime_set(5, 0);
 	printk(KERN_INFO "Callback activated. The expiration value saved as %d seconds & %d nanoseconds \n", timer->expires.tv.sec, timer->expires.tv.nsec);
-	time_delta = ktime_add(timer->expires, new_value);
-	printk(KERN_INFO "The updated value will be %d seconds & %d nanoseconds \n", time_delta.tv.sec, time_delta.tv.nsec);
-	timer->expires = ktime_add(timer->expires, new_value);
+	printk(KERN_INFO "The current time when entering this function is save as %d seconds & %d nanoseconds \n", currtime.tv.sec, currtime.tv.nsec);
+	hrtimer_forward(timer, currtime, interval);
+	printk(KERN_INFO "The updated value will be %d seconds & %d nanoseconds \n", timer->expires.tv.sec, timer->expires.tv.nsec);
 	return HRTIMER_RESTART;
 }
 
