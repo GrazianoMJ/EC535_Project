@@ -378,5 +378,10 @@ DMGturret_exit(void)
 	/* Cancel High Resolution Timer */
 	ret = hrtimer_cancel(&pan_pwm);
 	if (ret) printk(KERN_INFO "The timer was running when shut down.\n");
+
+	/* Turn Off & Release GPIO */
+	PWM_PULSE_OFF(PAN_SERVO);
+	gpio_free(PAN_SERVO);
+
 	printk(KERN_INFO "...module removed!\n");
 }
