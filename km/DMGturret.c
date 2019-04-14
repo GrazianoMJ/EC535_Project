@@ -19,6 +19,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define WRITE_BUFFER_SIZE (64)
 #define READ_BUFFER_SIZE (128)
 #define DEV_NAME "DMGturret"
+#define US_TO_NS(x) (x * 1E3L)
 
 /* Declare Function Prototypes - Module File Operations */
 static int DMGturret_init(void);
@@ -35,7 +36,7 @@ unsigned long ktime_divns(const ktime_t kt, s64 div);
 unsigned long hrtimer_forward(struct hrtimer *timer, ktime_t now, ktime_t interval);
 
 /* Declare Function Prototypes - Auxiliary Operations */
-enum hrtimer_restart example_callback (struct hrtimer *timer);
+enum hrtimer_restart pan_pwm_callback (struct hrtimer *timer);
 
 /* Set File Access Functions */
 struct file_operations DMGturret_fops = {
@@ -62,10 +63,18 @@ static int write_len;
 static int read_len;
 
 /* High Resolution Timers for PWM */
-static struct hrtimer hr_timer;
+static struct hrtimer pan_pwm;
+
+/* Holds Pan Servo State */
+static bool pan_servo_state = false;
+
+/* Holds Pan Servo Pulse Width */
+static ktime_t pan_servo_pulse;
+
+/* Holds the Overall Period */
+static ktime_t pwm_period;
 
 /* Missing Library Operation Definitions */
-
 /**
  * ktime_get - get the monotonic time in ktime_t format
  *
@@ -170,36 +179,42 @@ hrtimer_forward(struct hrtimer *timer, ktime_t now, ktime_t interval)
 	return orun;
 }
 
-/* Auxiliary Function Definition Section */
-
-//enum hrtimer_restart 
-//example_callback (struct hrtimer *timer)
+/* Auxiliary Function Definitions */
+//enum hrtimer_restart
+//pan_pwm_callback (struct hrtimer *timer)
 //{
-//	ktime_t new_value = ktime_set (5, 0), time_delta;
+//	ktime_t currtime, interval;
+//	currtime = ktime_get();
+//	interval = ktime_set(5, 0);
 //	printk(KERN_INFO "Callback activated. The expiration value saved as %d seconds & %d nanoseconds \n", timer->expires.tv.sec, timer->expires.tv.nsec);
-//	time_delta = ktime_add(timer->expires, new_value);
-//	printk(KERN_INFO "The updated value will be %d seconds & %d nanoseconds \n", time_delta.tv.sec, time_delta.tv.nsec);
-//	timer->expires = ktime_add(timer->expires, new_value);
+//	printk(KERN_INFO "The current time when entering this function is save as %d seconds & %d nanoseconds \n", currtime.tv.sec, currtime.tv.nsec);
+//	hrtimer_forward(timer, currtime, interval);
+//	printk(KERN_INFO "The updated value will be %d seconds & %d nanoseconds \n", timer->expires.tv.sec, timer->expires.tv.nsec);
 //	return HRTIMER_RESTART;
 //}
 
 enum hrtimer_restart
-example_callback (struct hrtimer *timer)
+pan_pwm_callback (struct hrtimer *timer)
 {
 	ktime_t currtime, interval;
+	
+	printk(KERN_INFO "Callback activated. The pan servo is currently %s and the expiration value saved as %d seconds & %d nanoseconds \n", ((pan_servo_state) ? "On" : "Off"), timer->expires.tv.sec, timer->expires.tv.nsec);
 	currtime = ktime_get();
-	interval = ktime_set(5, 0);
-	printk(KERN_INFO "Callback activated. The expiration value saved as %d seconds & %d nanoseconds \n", timer->expires.tv.sec, timer->expires.tv.nsec);
-	printk(KERN_INFO "The current time when entering this function is save as %d seconds & %d nanoseconds \n", currtime.tv.sec, currtime.tv.nsec);
-	hrtimer_forward(timer, currtime, interval);
-	printk(KERN_INFO "The updated value will be %d seconds & %d nanoseconds \n", timer->expires.tv.sec, timer->expires.tv.nsec);
+	if (pan_servo_state) {
+		interval = ktime_sub(pwm_period, pan_servo_pulse);
+		hrtimer_forward(timer, currtime, interval);
+	} else {
+		hrtimer_forward(timer, currtime, pan_servo_pulse);
+	}
+	pan_servo_state = !pan_servo_state;
+	printk(KERN_INFO "The pan servo is now set to %s and the next expiration is %d seconds & %d nanoseconds \n", ((pan_servo_state) ? "On" : "Off"), timer->expires.tv.sec, timer->expires.tv.nsec);
 	return HRTIMER_RESTART;
 }
 
+/* Module File Operation Definitions */
 static int
 DMGturret_init(void)
 {
-	ktime_t expires;
 	int result;
 
 	printk(KERN_INFO "Installing module...\n");
@@ -232,10 +247,11 @@ DMGturret_init(void)
 	read_len = 0;
 
 	/* Initialize High Resolution Timer */
-	expires = ktime_set (5, 0);
-	hrtimer_init(&hr_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	hr_timer.function = &example_callback;
-	hrtimer_start(&hr_timer, expires, HRTIMER_MODE_REL);
+	pan_servo_pulse = ktime_set (2, 0);
+	pwm_period = ktime_set (5, 0);
+	hrtimer_init(&pan_pwm, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	pan_pwm.function = &pan_pwm_callback;
+	hrtimer_start(&pan_pwm, pwm_period, HRTIMER_MODE_REL);
 
 	return 0;
 
@@ -261,7 +277,6 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 {
 	return 0;
 }
-
 static int
 DMGturret_release(struct inode *inode, struct file *filp)
 {
@@ -289,7 +304,7 @@ DMGturret_exit(void)
 	}
 	
 	/* Cancel High Resolution Timer */
-	ret = hrtimer_cancel( &hr_timer);
+	ret = hrtimer_cancel(&pan_pwm);
 	if (ret) printk(KERN_INFO "The timer was running when shut down.\n");
 	printk(KERN_INFO "...module removed!\n");
 }
