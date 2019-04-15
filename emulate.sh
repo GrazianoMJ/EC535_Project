@@ -34,19 +34,9 @@ else
 	exit 1
 fi
 
-#make -C ul clean
-#if make -C ul EMULATION_KERNEL=1
-#then
-#	:
-#else
-#	1>&2 echo "Failed to build counterstat. Aborting!"
-#	exit 1
-#fi
-
 rm -r "${rootfs_dir}/home"
 mkdir "${rootfs_dir}/home"
 cp km/DMGturret.ko "${rootfs_dir}/home"
-#cp ul/counterstat "${rootfs_dir}/home"
 
 if mkfs.jffs2 -l -U -e 128KiB -d "${rootfs_dir}" -D "${dev_table}" sumtool -e 128KiB -o "${bundled_rootfs}" && \
 	dd of=flash bs=1k count=16k if=/dev/zero && \
