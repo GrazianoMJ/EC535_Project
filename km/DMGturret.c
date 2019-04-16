@@ -19,6 +19,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 //#define PWM_PERIOD 100000 /* 100 ms in us */
 #define PWM_PERIOD 20000 /* 20 ms in us */
 #define PAN_SERVO 28
+#define TILT_SERVO 31
 
 /* Declare Function Prototypes - Module File Operations */
 static int DMGturret_init(void);
@@ -33,7 +34,7 @@ static bool PWM_PULSE_ON(uint8_t servo);
 static bool PWM_PULSE_OFF(uint8_t servo);
 static irqreturn_t handle_ost(int irq, void *dev_id);
 static bool parse_uint(const char *buf, uint32_t* num);
-static bool set_pulse_width(int index);
+static bool set_pulse_width(int index, char servo);
 
 /* Set File Access Functions */
 struct file_operations DMGturret_fops = {
@@ -59,15 +60,23 @@ static char *read_buffer;
 static int write_len;
 static int read_len;
 
-/* Holds Pan Servo State */
+/* Holds Servo State */
 static bool pan_servo_state = false;
+static bool tilt_servo_state = false;
 
-/* Holds Pan Servo Pulse Width & Period */
+/* Holds Servo Pulse Width */
 static uint32_t pan_servo_pulse;
-static uint32_t pan_servo_period;
+static uint32_t tilt_servo_pulse;
 
-/* Holds the Pulse Width Values */
-static uint32_t PWM_STATES[3];
+/* Holds PWM timer remaining time */
+static uint32_t pwm_pulse_remain = 0;
+static uint32_t pwm_period_remain = PWM_PERIOD;
+
+/* Holds the Pulse Width  */
+static uint32_t PULSE_LENGTH[3];
+
+/* Holds PWM State */
+static uint8_t PWM_STATE = 0;
 
 /* Holds the debug counter (SIMULATION ONLY)*/
 #ifdef SIM_MODE
@@ -103,19 +112,50 @@ handle_ost(int irq, void *dev_id)
 	}
 	
 	/* Handle PWM Signals */
-	if (pan_servo_state) {
-		OSMR4 = pan_servo_period;
-	} else {
+	switch (PWM_STATE) {
+		case 0: 
 #ifdef SIM_MODE
-		debug_counter++;
+			debug_counter++;
 #endif
-		pan_servo_period = PWM_PERIOD - pan_servo_pulse;
-		OSMR4 = pan_servo_pulse;
+			pwm_pulse_remain = (pan_servo_pulse < tilt_servo_pulse) ? tilt_servo_pulse - pan_servo_pulse :
+			                   (pan_servo_pulse > tilt_servo_pulse) ? pan_servo_pulse - tilt_servo_pulse : 0;
+			pwm_period_remain = (pan_servo_pulse < tilt_servo_pulse) ? PWM_PERIOD - tilt_servo_pulse : PWM_PERIOD - pan_servo_pulse;
+			PWM_STATE = (pan_servo_pulse < tilt_servo_pulse) ? 2 :
+				    (pan_servo_pulse > tilt_servo_pulse) ? 4 : 1;
+			pan_servo_state = PWM_PULSE_ON(PAN_SERVO);
+			tilt_servo_state = PWM_PULSE_ON(TILT_SERVO);
+			OSMR4 = (pan_servo_pulse < tilt_servo_pulse) ? pan_servo_pulse : tilt_servo_pulse;
+			break;
+		case 1: 
+			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
+			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
+			PWM_STATE = 0;
+			OSMR4 = pwm_period_remain;
+			break;
+		case 2:
+			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
+			PWM_STATE = 3;
+			OSMR4 = pwm_pulse_remain;
+			break;
+		case 3:
+			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
+			PWM_STATE = 0;
+			OSMR4 = pwm_period_remain;
+			break;
+		case 4:
+			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
+			PWM_STATE = 5;
+			OSMR4 = pwm_pulse_remain;
+			break;
+		case 5:
+			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
+			PWM_STATE = 0;
+			OSMR4 = pwm_period_remain;
+			break;
 	}
-	pan_servo_state = (pan_servo_state) ? PWM_PULSE_OFF(PAN_SERVO) : PWM_PULSE_ON(PAN_SERVO);
 #ifdef SIM_MODE
-	if (debug_counter == 50) {
-		printk(KERN_INFO "One second of cycles reached.\n");
+	if (debug_counter == 100) {
+		printk(KERN_INFO "Two seconds of cycles; Pan Pulse Width = %u | Tilt Pulse Width = %u\n", pan_servo_pulse, tilt_servo_pulse);
 		debug_counter = 1;
 	}
 #endif
@@ -138,13 +178,14 @@ parse_uint(const char* buf, uint32_t* num)
 }
 
 static bool
-set_pulse_width(int index)
+set_pulse_width(int index, char servo)
 {
-	if (index < 0 || index > 2)
+	if (index < 0 || index > 2 || (servo != 'p' && servo != 't'))
 	{
 		return false;
 	}
-	pan_servo_pulse = PWM_STATES[index];
+	pan_servo_pulse = (servo == 'p') ? PULSE_LENGTH[index] : pan_servo_pulse;
+	tilt_servo_pulse = (servo == 't') ? PULSE_LENGTH[index] : tilt_servo_pulse;
 	return true;
 }
 
@@ -163,7 +204,9 @@ set_pulse_width(int index)
 
 	/* Initialize GPIO Settings */
 	result = gpio_request(PAN_SERVO, "PAN_SERVO")
-                || gpio_direction_output(PAN_SERVO, 0);
+		|| gpio_request(TILT_SERVO, "TILT_SERVO")
+                || gpio_direction_output(PAN_SERVO, 0)
+		|| gpio_direction_output(TILT_SERVO, 0);
 	if (result != 0)
 	{
 		goto fail;
@@ -190,15 +233,15 @@ set_pulse_width(int index)
 	read_len = 0;
 
 	/* Initialize PWM Variable Values: */
-//	PWM_STATES[0] = 1000; /* 75 ms */
-//	PWM_STATES[1] = 7500; /* 50 ms */
-//	PWM_STATES[2] = 15000; /* 25 ms */
-	PWM_STATES[0] = 1000; /* 1 ms */
-	PWM_STATES[1] = 1500; /* 1.5 ms */
-	PWM_STATES[2] = 2000; /* 2.0 ms */
+	PULSE_LENGTH[0] = 1000; /* 1 ms */
+	PULSE_LENGTH[1] = 7500; /* 7.5 ms */
+	PULSE_LENGTH[2] = 15000; /* 15 ms */
+//	PULSE_LENGTH[0] = 1000; /* 1 ms */
+//	PULSE_LENGTH[1] = 1500; /* 1.5 ms */
+//	PULSE_LENGTH[2] = 2000; /* 2.0 ms */
 
-	pan_servo_pulse = PWM_STATES[1];
-	pan_servo_period = PWM_PERIOD - PWM_STATES[1];
+	pan_servo_pulse = PULSE_LENGTH[1];
+	tilt_servo_pulse = PULSE_LENGTH[1];
 
 	/* Initialize OS Timer for Pulse Width Modulation */
 	if (request_irq(IRQ_OST_4_11, &handle_ost, 0, DEV_NAME, NULL) != 0) {
@@ -258,9 +301,9 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 		return -EINVAL;
 	if (count - 1 != 2)
 		return -EINVAL;
-	if (write_buffer[0] == 'p')
+	if (write_buffer[0] == 'p' || write_buffer[0] == 't')
 	{
-		if (!parse_uint(write_buffer + 1, &value) || !set_pulse_width(value)) {
+		if (!parse_uint(write_buffer + 1, &value) || !set_pulse_width(value, write_buffer[0])) {
 			return -EINVAL;
 		}
 	}
@@ -292,7 +335,9 @@ DMGturret_exit(void)
 	
 	/* Turn Off & Release GPIO */
 	PWM_PULSE_OFF(PAN_SERVO);
+	PWM_PULSE_OFF(TILT_SERVO);
 	gpio_free(PAN_SERVO);
+	gpio_free(TILT_SERVO);
 
 	/* Release OS Timer */
 	OIER &= ~(1<<4);
