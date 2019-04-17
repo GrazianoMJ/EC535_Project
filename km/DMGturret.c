@@ -16,7 +16,6 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define WRITE_BUFFER_SIZE (64)
 #define READ_BUFFER_SIZE (128)
 #define DEV_NAME "DMGturret"
-//#define PWM_PERIOD 100000 /* 100 ms in us */
 #define PWM_PERIOD 20000 /* 20 ms in us */
 #define PAN_SERVO 28
 #define TILT_SERVO 31
@@ -76,7 +75,15 @@ static uint32_t pwm_period_remain = PWM_PERIOD;
 static uint32_t PULSE_LENGTH[3];
 
 /* Holds PWM State */
-static uint8_t PWM_STATE = 0;
+typedef enum {
+	PWM_STATE_ALL_OFF,
+	PWM_STATE_EQUAL_ON,
+	PWM_STATE_PAN_TO_TILT,
+	PWM_STATE_TILT_ONLY,
+	PWM_STATE_TILT_TO_PAN,
+	PWM_STATE_PAN_ONLY
+} pwm_state;
+static pwm_state CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
 
 /* Holds the debug counter (SIMULATION ONLY)*/
 #ifdef SIM_MODE
@@ -112,44 +119,43 @@ handle_ost(int irq, void *dev_id)
 	}
 	
 	/* Handle PWM Signals */
-	switch (PWM_STATE) {
-		case 0: 
+	switch (CURRENT_PWM_STATE) {
+		case PWM_STATE_ALL_OFF: 
 #ifdef SIM_MODE
 			debug_counter++;
 #endif
-			pwm_pulse_remain = (pan_servo_pulse < tilt_servo_pulse) ? tilt_servo_pulse - pan_servo_pulse :
-			                   (pan_servo_pulse > tilt_servo_pulse) ? pan_servo_pulse - tilt_servo_pulse : 0;
+			pwm_pulse_remain = (pan_servo_pulse < tilt_servo_pulse) ? tilt_servo_pulse - pan_servo_pulse : pan_servo_pulse - tilt_servo_pulse;
 			pwm_period_remain = (pan_servo_pulse < tilt_servo_pulse) ? PWM_PERIOD - tilt_servo_pulse : PWM_PERIOD - pan_servo_pulse;
-			PWM_STATE = (pan_servo_pulse < tilt_servo_pulse) ? 2 :
-				    (pan_servo_pulse > tilt_servo_pulse) ? 4 : 1;
+			CURRENT_PWM_STATE = (pan_servo_pulse < tilt_servo_pulse) ? PWM_STATE_PAN_TO_TILT :
+				    (pan_servo_pulse > tilt_servo_pulse) ? PWM_STATE_TILT_TO_PAN : PWM_STATE_EQUAL_ON;
 			pan_servo_state = PWM_PULSE_ON(PAN_SERVO);
 			tilt_servo_state = PWM_PULSE_ON(TILT_SERVO);
 			OSMR4 = (pan_servo_pulse < tilt_servo_pulse) ? pan_servo_pulse : tilt_servo_pulse;
 			break;
-		case 1: 
+		case PWM_STATE_EQUAL_ON: 
 			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
 			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
-			PWM_STATE = 0;
+			CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
 			OSMR4 = pwm_period_remain;
 			break;
-		case 2:
+		case PWM_STATE_PAN_TO_TILT:
 			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
-			PWM_STATE = 3;
+			CURRENT_PWM_STATE = PWM_STATE_TILT_ONLY;
 			OSMR4 = pwm_pulse_remain;
 			break;
-		case 3:
+		case PWM_STATE_TILT_ONLY:
 			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
-			PWM_STATE = 0;
+			CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
 			OSMR4 = pwm_period_remain;
 			break;
-		case 4:
+		case PWM_STATE_TILT_TO_PAN:
 			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
-			PWM_STATE = 5;
+			CURRENT_PWM_STATE = PWM_STATE_PAN_ONLY;
 			OSMR4 = pwm_pulse_remain;
 			break;
-		case 5:
+		case PWM_STATE_PAN_ONLY:
 			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
-			PWM_STATE = 0;
+			CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
 			OSMR4 = pwm_period_remain;
 			break;
 	}
@@ -233,12 +239,12 @@ set_pulse_width(int index, char servo)
 	read_len = 0;
 
 	/* Initialize PWM Variable Values: */
-	PULSE_LENGTH[0] = 1000; /* 1 ms */
-	PULSE_LENGTH[1] = 7500; /* 7.5 ms */
-	PULSE_LENGTH[2] = 15000; /* 15 ms */
 //	PULSE_LENGTH[0] = 1000; /* 1 ms */
-//	PULSE_LENGTH[1] = 1500; /* 1.5 ms */
-//	PULSE_LENGTH[2] = 2000; /* 2.0 ms */
+//	PULSE_LENGTH[1] = 7500; /* 7.5 ms */
+//	PULSE_LENGTH[2] = 15000; /* 15 ms */
+	PULSE_LENGTH[0] = 1000; /* 1 ms */
+	PULSE_LENGTH[1] = 1500; /* 1.5 ms */
+	PULSE_LENGTH[2] = 2000; /* 2.0 ms */
 
 	pan_servo_pulse = PULSE_LENGTH[1];
 	tilt_servo_pulse = PULSE_LENGTH[1];
