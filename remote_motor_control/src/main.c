@@ -37,19 +37,13 @@ static struct Command
 parse_message(const unsigned char* message, size_t message_size)
 {
 	struct Command cmd = { .command_type = INVALID_COMMAND, .magnitude = 0 };
-	if (message_size == 1)
+	if (message_size == 2)
 	{
 		switch(message[0])
 		{
 		case 0:
 		case 1:
-			cmd.command_type = command_map[message[0]];
-		}
-	}
-	else if (message_size == 2)
-	{
-		switch(message[0])
-		{
+			/* message[1] is don't-care for the first two command types */
 		case 2:
 		case 3:
 		case 4:
@@ -110,10 +104,10 @@ run_tests(void)
 	{
 		struct Command cmd;
 
-		cmd = parse_message((unsigned char[]){0}, 1);
+		cmd = parse_message((unsigned char[]){0, 0}, 2);
 		assert(cmd.command_type == 'F');
 
-		cmd = parse_message((unsigned char[]){1}, 1);
+		cmd = parse_message((unsigned char[]){1, 0}, 2);
 		assert(cmd.command_type == 'P');
 
 		cmd = parse_message((unsigned char[]){2, 7}, 2);
@@ -131,14 +125,6 @@ run_tests(void)
 		cmd = parse_message((unsigned char[]){5, 4}, 2);
 		assert(cmd.command_type == 'R');
 		assert(cmd.magnitude == 4);
-
-		/* Args with commands that expect no args */
-		cmd = parse_message((unsigned char[]){0, 0}, 2);
-		assert(cmd.command_type == INVALID_COMMAND);
-
-		/* Args with commands that expect no args */
-		cmd = parse_message((unsigned char[]){1, 1}, 2);
-		assert(cmd.command_type == INVALID_COMMAND);
 
 		/* Too many args */
 		cmd = parse_message((unsigned char[]){2, 0, 0}, 3);
@@ -171,7 +157,7 @@ run_tests(void)
 		unlink(fake_file_name);
 
 		// fire
-		recv_msg((unsigned char[]){0}, 1);
+		recv_msg((unsigned char[]){0, 0}, 2);
 		lseek(control_fd, 0, SEEK_SET);
 		fake_dev_file_size = read(control_fd, fake_dev_file, FAKE_DEV_FILE_BUF_SIZE);
 		assert(fake_dev_file_size == 1);
