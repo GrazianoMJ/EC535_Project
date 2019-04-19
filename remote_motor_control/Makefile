@@ -1,10 +1,17 @@
-LOCAL_BUILD=0
-ifeq "$(LOCAL_BUILD)" "0"
+TARGET=gumstix
+ifeq "$(TARGET)" "gumstix"
+	CC=${EC535}/gumstix/oe/cross/bin/arm-linux-gcc
+	override CPPFLAGS += -I${EC535}/gumstix/bluez/bluez-libs-dev/usr/include/
+	override LDFLAGS += -L${EC535}/gumstix/bluez/bluez-libs-dev/usr/lib/
+else ifeq "$(TARGET)" "emulator"
 	CC=${EC535}/arm-linux/bin/arm-linux-gcc
 	override CPPFLAGS += -I${EC535}/arm-linux/usr/include
 	override LDFLAGS += -L${EC535}/arm-linux/usr/lib
-else
+else ifeq "$(TARGET)" "local"
+	# Local build
 	override CPPFLAGS += `pkg-config --cflags dbus-1`
+else
+$(error TARGET must be one of gumstix, emulator, or local)
 endif
 
 SELF_TEST=0
@@ -22,7 +29,7 @@ else ifeq "$(BUILD_TYPE)" "Debug"
 endif
 override CFLAGS += -std=gnu99
 override CXXFLAGS += -std=c++11
-override CPPFLAGS += -Wall -Werror -Ithirdparty/include -Isrc
+override CPPFLAGS += -Wall -Werror -Isrc
 
 $(binary_name): src/main.o src/bluetooth.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $+ -ldbus-1 -lbluetooth -o $@
