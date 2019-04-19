@@ -19,6 +19,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define PWM_PERIOD 20000 /* 20 ms in us */
 #define PAN_SERVO 28
 #define TILT_SERVO 31
+#define OIER_E4 (1 << 4) /* pxa-regs.h only gives us OIER_E0 - 3 */
 
 /* Declare Function Prototypes - Module File Operations */
 static int DMGturret_init(void);
@@ -33,7 +34,6 @@ static bool PWM_PULSE_ON(uint8_t servo);
 static bool PWM_PULSE_OFF(uint8_t servo);
 static irqreturn_t handle_ost(int irq, void *dev_id);
 static bool parse_uint(const char *buf, uint32_t* num);
-static bool set_pulse_width(int index, char servo);
 
 /* Set File Access Functions */
 struct file_operations DMGturret_fops = {
@@ -72,7 +72,12 @@ static uint32_t pwm_pulse_remain = 0;
 static uint32_t pwm_period_remain = PWM_PERIOD;
 
 /* Holds the Pulse Width  */
-static uint32_t PULSE_LENGTH[3];
+#define MIN_PULSE (1000u) /* 1 ms */
+#define MAX_PULSE (2000u) /* 2 ms */
+#define PULSE_COUNT 10
+#define PULSE_GRANULARITY ((MAX_PULSE - MIN_PULSE) / PULSE_COUNT)
+#define PULSE_LENGTH(index) ((index) * PULSE_GRANULARITY + MIN_PULSE)
+#define DEFAULT_PULSE_INDEX (PULSE_COUNT / 2)
 
 /* Holds PWM State */
 typedef enum {
@@ -83,7 +88,7 @@ typedef enum {
 	PWM_STATE_TILT_TO_PAN,
 	PWM_STATE_PAN_ONLY
 } pwm_state;
-static pwm_state CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
+static pwm_state current_pwm_state = PWM_STATE_ALL_OFF;
 
 /* Holds the debug counter (SIMULATION ONLY)*/
 #ifdef SIM_MODE
@@ -113,20 +118,25 @@ static irqreturn_t
 handle_ost(int irq, void *dev_id)
 {
 	/* All OS timers 4-11 are handled here. Check which one ticked. */
-	if (!(OSSR & 1<<4))
+	if (!(OSSR & OIER_E4))
 	{
 		return IRQ_NONE;
 	}
 	
-	/* Handle PWM Signals */
-	switch (CURRENT_PWM_STATE) {
+	/*
+	 * Handle PWM Signals
+	 * Align them to start at the same time. Trigger each followup OST tick
+	 * to happen when the next-soonest PWM falling edge is until none remain.
+	 * Then schedule the next rising edge.
+	 */
+	switch (current_pwm_state) {
 		case PWM_STATE_ALL_OFF: 
 #ifdef SIM_MODE
 			debug_counter++;
 #endif
 			pwm_pulse_remain = (pan_servo_pulse < tilt_servo_pulse) ? tilt_servo_pulse - pan_servo_pulse : pan_servo_pulse - tilt_servo_pulse;
 			pwm_period_remain = (pan_servo_pulse < tilt_servo_pulse) ? PWM_PERIOD - tilt_servo_pulse : PWM_PERIOD - pan_servo_pulse;
-			CURRENT_PWM_STATE = (pan_servo_pulse < tilt_servo_pulse) ? PWM_STATE_PAN_TO_TILT :
+			current_pwm_state = (pan_servo_pulse < tilt_servo_pulse) ? PWM_STATE_PAN_TO_TILT :
 				    (pan_servo_pulse > tilt_servo_pulse) ? PWM_STATE_TILT_TO_PAN : PWM_STATE_EQUAL_ON;
 			pan_servo_state = PWM_PULSE_ON(PAN_SERVO);
 			tilt_servo_state = PWM_PULSE_ON(TILT_SERVO);
@@ -135,39 +145,39 @@ handle_ost(int irq, void *dev_id)
 		case PWM_STATE_EQUAL_ON: 
 			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
 			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
-			CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
+			current_pwm_state = PWM_STATE_ALL_OFF;
 			OSMR4 = pwm_period_remain;
 			break;
 		case PWM_STATE_PAN_TO_TILT:
 			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
-			CURRENT_PWM_STATE = PWM_STATE_TILT_ONLY;
+			current_pwm_state = PWM_STATE_TILT_ONLY;
 			OSMR4 = pwm_pulse_remain;
 			break;
 		case PWM_STATE_TILT_ONLY:
 			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
-			CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
+			current_pwm_state = PWM_STATE_ALL_OFF;
 			OSMR4 = pwm_period_remain;
 			break;
 		case PWM_STATE_TILT_TO_PAN:
 			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
-			CURRENT_PWM_STATE = PWM_STATE_PAN_ONLY;
+			current_pwm_state = PWM_STATE_PAN_ONLY;
 			OSMR4 = pwm_pulse_remain;
 			break;
 		case PWM_STATE_PAN_ONLY:
 			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
-			CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
+			current_pwm_state = PWM_STATE_ALL_OFF;
 			OSMR4 = pwm_period_remain;
 			break;
 	}
 #ifdef SIM_MODE
-	if (debug_counter == 100) {
-		printk(KERN_INFO "Two seconds of cycles; Pan Pulse Width = %u | Tilt Pulse Width = %u\n", pan_servo_pulse, tilt_servo_pulse);
+	if (debug_counter == 1000) {
+		printk(KERN_INFO "Twenty seconds of cycles; Pan Pulse Width = %u | Tilt Pulse Width = %u\n", pan_servo_pulse, tilt_servo_pulse);
 		debug_counter = 1;
 	}
 #endif
 	/* Mark the tick as handled by writing a 1 in this timer's status. */
-	OSSR = 1<<4;
-	OSCR4 = 0; /* Reset the counter. XXX: This shoudln't be necessary, but it seems to be... */
+	OSSR = OIER_E4;
+	OSCR4 = 0; /* Reset the counter. */
 	return IRQ_HANDLED;
 }
 
@@ -184,18 +194,29 @@ parse_uint(const char* buf, uint32_t* num)
 }
 
 static bool
-set_pulse_width(int index, char servo)
+set_pulse_width(uint32_t width, char servo)
 {
-	if (index < 0 || index > 2 || (servo != 'p' && servo != 't'))
+#ifdef SIM_MODE
+	printk(KERN_INFO "Set %c: %d\n", servo, width);
+#endif
+	if (width < MIN_PULSE || width > MAX_PULSE || (servo != 'p' && servo != 't'))
 	{
 		return false;
 	}
-	pan_servo_pulse = (servo == 'p') ? PULSE_LENGTH[index] : pan_servo_pulse;
-	tilt_servo_pulse = (servo == 't') ? PULSE_LENGTH[index] : tilt_servo_pulse;
+
+	if (servo == 'p')
+	{
+		pan_servo_pulse = width;
+	}
+	else if (servo == 't')
+	{
+		tilt_servo_pulse = width;
+	}
 	return true;
 }
 
-/* Module File Operation Definitions */ static int DMGturret_init(void)
+/* Module File Operation Definitions */
+static int DMGturret_init(void)
 {
 	int result;
 
@@ -238,16 +259,9 @@ set_pulse_width(int index, char servo)
 	memset(read_buffer, 0, READ_BUFFER_SIZE);
 	read_len = 0;
 
-	/* Initialize PWM Variable Values: */
-//	PULSE_LENGTH[0] = 1000; /* 1 ms */
-//	PULSE_LENGTH[1] = 7500; /* 7.5 ms */
-//	PULSE_LENGTH[2] = 15000; /* 15 ms */
-	PULSE_LENGTH[0] = 1000; /* 1 ms */
-	PULSE_LENGTH[1] = 1500; /* 1.5 ms */
-	PULSE_LENGTH[2] = 2000; /* 2.0 ms */
-
-	pan_servo_pulse = PULSE_LENGTH[1];
-	tilt_servo_pulse = PULSE_LENGTH[1];
+	/* Center the servos */
+	pan_servo_pulse = PULSE_LENGTH(DEFAULT_PULSE_INDEX);
+	tilt_servo_pulse = PULSE_LENGTH(DEFAULT_PULSE_INDEX);
 
 	/* Initialize OS Timer for Pulse Width Modulation */
 	if (request_irq(IRQ_OST_4_11, &handle_ost, 0, DEV_NAME, NULL) != 0) {
@@ -274,7 +288,7 @@ set_pulse_width(int index, char servo)
 		OSMR4 = PWM_PERIOD; /* Number of ticks before the IRQ is triggered
 		                 * For 1us clock, 500k => 0.5 seconds.
 		                 */
-		OIER |= 1 << 4; /* XXX: fix the hack if we can... should use a macro if available... Only saw for counters OIER_E0 - 3 */
+		OIER |= OIER_E4;
 		OSCR4 = 0; /* Initialize the counter value (and start the counter) */
 	}
 
@@ -300,16 +314,52 @@ DMGturret_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 static ssize_t
 DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 {
-	uint32_t value;
+	uint32_t value; /* First argument for any command */
+	char control_interface = '\0';
 	if (count > WRITE_BUFFER_SIZE)
 		count = WRITE_BUFFER_SIZE;
 	if (copy_from_user(write_buffer, buf, count))
 		return -EINVAL;
 	if (count - 1 != 2)
 		return -EINVAL;
-	if (write_buffer[0] == 'p' || write_buffer[0] == 't')
+	if (write_buffer[0] == 'L' || write_buffer[0] == 'R' ||
+	    write_buffer[0] == 'U' || write_buffer[0] == 'D' ||
+	    write_buffer[0] == 'F' || write_buffer[0] == 'P')
 	{
-		if (!parse_uint(write_buffer + 1, &value) || !set_pulse_width(value, write_buffer[0])) {
+		if (!parse_uint(write_buffer + 1, &value))
+		{
+			return -EINVAL;
+		}
+
+		switch (write_buffer[0])
+		{
+		case 'F':
+			/* TODO: Fire is not yet implemented */
+			return -EINVAL;
+		case 'P':
+			/* TODO: Prime is not yet implemented */
+			return -EINVAL;
+		case 'D':
+			value = max(MIN_PULSE, pan_servo_pulse - value * PULSE_GRANULARITY);
+			control_interface = 'p';
+			break;
+		case 'U':
+			value = min(MAX_PULSE, pan_servo_pulse + value * PULSE_GRANULARITY);
+			control_interface = 'p';
+			break;
+		case 'L':
+			value = max(MIN_PULSE, tilt_servo_pulse - value * PULSE_GRANULARITY);
+			control_interface = 't';
+			break;
+		case 'R':
+			value = min(MAX_PULSE, tilt_servo_pulse + value * PULSE_GRANULARITY);
+			control_interface = 't';
+			break;
+		}
+		if (!set_pulse_width(value, control_interface))
+		{
+			printk(KERN_INFO "Unable to set pulse width %u on %c\n",
+				       	value, control_interface);
 			return -EINVAL;
 		}
 	}
@@ -346,7 +396,7 @@ DMGturret_exit(void)
 	gpio_free(TILT_SERVO);
 
 	/* Release OS Timer */
-	OIER &= ~(1<<4);
+	OIER &= ~OIER_E4;
 	free_irq(IRQ_OST_4_11, NULL);
 
 	printk(KERN_INFO "...module removed!\n");
