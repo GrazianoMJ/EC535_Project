@@ -58,7 +58,6 @@ public class TurretControlActivity extends AppCompatActivity
     private static final String TAG = TurretControlActivity.class.getName();
 
 
-
     private ArrayList<BluetoothDevice> mDeviceList = new ArrayList<>();
 
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
@@ -85,7 +84,6 @@ public class TurretControlActivity extends AppCompatActivity
                         if (dev.getAddress().equals(TURRET_MAC_ADDRESS)) {
                             mTurretBluetoothDevice = dev;
                             mTurrentDiscovered = true;
-                            //pairWithTurret();
                             connectToTurret();
                             break;
                         }
@@ -114,40 +112,6 @@ public class TurretControlActivity extends AppCompatActivity
                     boolean result = device.fetchUuidsWithSdp();
                 }
 
-            } else if (BluetoothDevice.ACTION_PAIRING_REQUEST.equals(action)) {
-                BluetoothDevice device = intent.getParcelableExtra(
-                        BluetoothDevice.EXTRA_DEVICE);
-                int pin = intent.getIntExtra(
-                        "android.bluetooth.device.extra.PAIRING_KEY",
-                        1234);
-                Log.d(TAG, String.format(
-                        "Starting auto pairing with Turret with PIN %s...",
-                        intent.getIntExtra(
-                                "android.bluetooth.device.extra.PAIRING_KEY",
-                                1234)));
-                byte[] pinBytes;
-                pinBytes = ("" + pin).getBytes(StandardCharsets.UTF_8);
-                device.setPin(pinBytes);
-                device.setPairingConfirmation(true);
-                connectToTurret();
-            } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
-                BluetoothDevice device = intent.getParcelableExtra(
-                        BluetoothDevice.EXTRA_DEVICE);
-                int bondState = device.getBondState();
-                switch (bondState) {
-                    case BluetoothDevice.BOND_NONE:
-                        // TODO: reestablish bond
-                        Log.d(TAG, "Lost bond with turret");
-                        break;
-                    case BluetoothDevice.BOND_BONDING:
-                        Log.d(TAG, "Bonding with turret...");
-                        break;
-                    case BluetoothDevice.BOND_BONDED:
-                        // TODO: maybe check if we are already connected
-                        Log.d(TAG, "Bonded with turret");
-                        connectToTurret();
-                        break;
-                }
             }
         }
     };
@@ -179,19 +143,6 @@ public class TurretControlActivity extends AppCompatActivity
         mToast.show();
         Log.d(TAG, "Spawning bluetooth client thread..");
         mBluetoothClient.run();
-    }
-
-
-    @RequiresApi(api = Build.VERSION_CODES.KITKAT)
-    protected void pairWithTurret() {
-        if (mTurretBluetoothDevice == null)
-            return;
-        // pair with device
-        mToast.setText("Pairing with turret");
-        mToast.show();
-        mTurretBluetoothDevice.createBond();
-        mToast.setText("Pairing with turret complete");
-        mToast.show();
     }
 
     protected void connectToTurret() {
@@ -271,8 +222,6 @@ public class TurretControlActivity extends AppCompatActivity
         IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
         filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
         filter.addAction(BluetoothDevice.ACTION_UUID);
-        filter.addAction(BluetoothDevice.ACTION_PAIRING_REQUEST);
-        filter.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
         registerReceiver(mBroadcastReceiver, filter);
         // Make sure bluetooth is enabled
         mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
@@ -470,19 +419,19 @@ public class TurretControlActivity extends AppCompatActivity
                 mTextBox.setText("Prime payload");
                 break;
             case TILT_UP:
-                mTextBox.setText(String.format("Tilt turret up by %d degree(s)",
+                mTextBox.setText(String.format("Tilt turret up by %d tick(s)",
                         cmd.getArgument()));
                 break;
             case TILT_DOWN:
-                mTextBox.setText(String.format("Tilt turret down by %d degree(s)",
+                mTextBox.setText(String.format("Tilt turret down by %d tick(s)",
                         cmd.getArgument()));
                 break;
             case ROTATE_LEFT:
-                mTextBox.setText(String.format("Rotate turret left by %d degree(s)",
+                mTextBox.setText(String.format("Rotate turret left by %d tick(s)",
                         cmd.getArgument()));
                 break;
             case ROTATE_RIGHT:
-                mTextBox.setText(String.format("Rotate turret right by %d degree(s)",
+                mTextBox.setText(String.format("Rotate turret right by %d tick(s)",
                         cmd.getArgument()));
                 break;
             case INVALID:

@@ -3,6 +3,9 @@ package org.ec535.dmgturret;
 import java.util.ArrayList;
 
 public class VoiceCommand {
+
+    public final static int MAX_TICK = 10;
+
     public enum CommandName {
         FIRE ((byte) 0),
         PRIME ((byte) 1),
@@ -71,6 +74,7 @@ public class VoiceCommand {
         private int mSentenceIndex;
         boolean isValid;
 
+
         public CommandArgument() {
             // Null constructor
             mArgument = 0;
@@ -112,6 +116,10 @@ public class VoiceCommand {
         mCommandOp = op;
         mArgument = arg;
         isValid = false;
+    }
+
+    public boolean hasArgument() {
+        return mCommandOp.shouldHaveAnArgument();
     }
 
     public boolean isValid() {
