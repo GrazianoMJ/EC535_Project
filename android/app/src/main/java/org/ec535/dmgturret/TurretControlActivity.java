@@ -18,8 +18,6 @@ import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.support.annotation.NonNull;
 import android.support.annotation.RequiresApi;
-import android.support.design.widget.FloatingActionButton;
-import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
@@ -29,10 +27,10 @@ import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.UUID;
@@ -46,11 +44,14 @@ public class TurretControlActivity extends AppCompatActivity
     private Intent mSpeechIntent;
     private boolean mTurrentConnected;
     private boolean mTurrentDiscovered;
+    private boolean mCmdButtonIsUp = true;
+    private boolean mHasEarlyResults = false;
     private SpeechRecognizer mSpeechRecognizer;
     private BluetoothAdapter mBluetoothAdapter;
     private BluetoothDevice mTurretBluetoothDevice;
     private BluetoothClient mBluetoothClient;
     private BluetoothConnector mBluetoothConnector;
+    private ArrayList<String> mVoiceCaptures;
     private static final String TURRET_MAC_ADDRESS = "E8:2A:EA:4A:04:FB";
     private static final int REQUEST_ENABLE_BT_ID = 299;
     private static final int PERMISSIONS_REQUEST_RECORD_AUDIO_ID = 300;
@@ -156,7 +157,7 @@ public class TurretControlActivity extends AppCompatActivity
         mBluetoothConnector.start();
     }
 
-    @SuppressLint("ShowToast")
+    @SuppressLint({"ShowToast", "ClickableViewAccessibility"})
     @RequiresApi(api = Build.VERSION_CODES.KITKAT)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -165,13 +166,26 @@ public class TurretControlActivity extends AppCompatActivity
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
 
-        FloatingActionButton fab = findViewById(R.id.fab);
-        fab.setOnClickListener(new View.OnClickListener() {
+        ImageButton cmdButton = findViewById(R.id.commandButton);
+        cmdButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View view) {
-                Snackbar.make(view, "Replace with your own action",
-                        Snackbar.LENGTH_LONG)
-                        .setAction("Action", null).show();
+            public void onClick(View v) {
+                if (mCmdButtonIsUp) {
+                    Log.d(TAG, "Command button pressed down");
+                    mSpeechRecognizer.startListening(mSpeechIntent);
+                    mToast.setText("Say your command now...");
+                    mToast.show();
+                } else {
+                    Log.d(TAG, "Command button released");
+                    mToast.setText("Processing your command...");
+                    mToast.show();
+                    if (mHasEarlyResults) {
+                        mHasEarlyResults = false;
+                        tryProcessVoiceInput(mVoiceCaptures);
+                    } else
+                        mSpeechRecognizer.stopListening();
+                }
+                mCmdButtonIsUp = !mCmdButtonIsUp;
             }
         });
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
@@ -270,20 +284,19 @@ public class TurretControlActivity extends AppCompatActivity
         mSpeechIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         mSpeechIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                1500);
+                150000);
         mSpeechIntent.putExtra(
                 RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                1500);
+                150000);
         mSpeechIntent.putExtra(
-                RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500
+                RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 150000
         );
-        mSpeechIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
-        mSpeechIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        mSpeechIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10);
+        //mSpeechIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         mSpeechRecognizer = SpeechRecognizer.createSpeechRecognizer(
                 getApplicationContext()
         );
         mSpeechRecognizer.setRecognitionListener(this);
-        mSpeechRecognizer.startListening(mSpeechIntent);
     }
 
     @Override
@@ -310,13 +323,11 @@ public class TurretControlActivity extends AppCompatActivity
     @Override
     protected void onPause() {
         super.onPause();
-        //mSpeechRecognizer.stopListening();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        //mSpeechRecognizer.startListening(mSpeechIntent);
     }
 
     @Override
@@ -394,7 +405,6 @@ public class TurretControlActivity extends AppCompatActivity
                 Log.d( TAG, String.format("Encountered error code %d\n", error));
                 break;
         }
-        mSpeechRecognizer.startListening(mSpeechIntent);
     }
 
     protected ArrayList<String> getWordList(ArrayList<String> sentenceList) {
@@ -448,22 +458,23 @@ public class TurretControlActivity extends AppCompatActivity
     @Override
     public void onResults(Bundle results) {
         Log.d(TAG, "Speech capture results ready");
-        ArrayList<String> voiceCaptures = results.getStringArrayList(
+        mVoiceCaptures = results.getStringArrayList(
                 SpeechRecognizer.RESULTS_RECOGNITION
         );
         StringBuilder strBuilder = new StringBuilder();
-        if (voiceCaptures != null) {
-            for (int i = 0; i < voiceCaptures.size(); i++) {
+        if (mVoiceCaptures != null) {
+            for (int i = 0; i < mVoiceCaptures.size(); i++) {
                 Log.d(TAG, String.format("Word capture [%d]: %s\n",
-                        i + 1, voiceCaptures.get(i)));
+                        i + 1, mVoiceCaptures.get(i)));
                 if (strBuilder.length() > 0)
                     strBuilder.append(", ");
-                strBuilder.append(voiceCaptures.get(i));
+                strBuilder.append(mVoiceCaptures.get(i));
             }
         }
-        // mTextBox.setText(strBuilder.toString());
-        tryProcessVoiceInput(voiceCaptures);
-        mSpeechRecognizer.startListening(mSpeechIntent);
+        if (mCmdButtonIsUp)
+            tryProcessVoiceInput(mVoiceCaptures);
+        else
+            mHasEarlyResults = true;
     }
 
     protected void onDestroy() {
