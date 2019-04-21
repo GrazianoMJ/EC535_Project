@@ -132,7 +132,13 @@ public class TurretControlActivity extends AppCompatActivity
 
     @Override
     public void onConnectionFailed(String reason) {
-        // TODO: retry?
+        this.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mToast.setText("Failed to connect to turret");
+                mToast.show();
+            }
+        });
     }
 
     @Override
