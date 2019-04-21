@@ -19,6 +19,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define PWM_PERIOD 20000 /* 20 ms in us */
 #define PAN_SERVO 28
 #define TILT_SERVO 31
+#define STEP_MOTOR 29
 
 /* Declare Function Prototypes - Module File Operations */
 static int DMGturret_init(void);
@@ -62,6 +63,7 @@ static int read_len;
 /* Holds Servo State */
 static bool pan_servo_state = false;
 static bool tilt_servo_state = false;
+static bool step_motor_state = false;
 
 /* Holds Servo Pulse Width */
 static uint32_t pan_servo_pulse;
@@ -130,6 +132,7 @@ handle_ost(int irq, void *dev_id)
 				    (pan_servo_pulse > tilt_servo_pulse) ? PWM_STATE_TILT_TO_PAN : PWM_STATE_EQUAL_ON;
 			pan_servo_state = PWM_PULSE_ON(PAN_SERVO);
 			tilt_servo_state = PWM_PULSE_ON(TILT_SERVO);
+			step_motor_state = (!step_motor_state) ? PWM_PULSE_ON(STEP_MOTOR) : PWM_PULSE_OFF(STEP_MOTOR);
 			OSMR4 = (pan_servo_pulse < tilt_servo_pulse) ? pan_servo_pulse : tilt_servo_pulse;
 			break;
 		case PWM_STATE_EQUAL_ON: 
@@ -211,8 +214,10 @@ set_pulse_width(int index, char servo)
 	/* Initialize GPIO Settings */
 	result = gpio_request(PAN_SERVO, "PAN_SERVO")
 		|| gpio_request(TILT_SERVO, "TILT_SERVO")
+		|| gpio_request(STEP_MOTOR, "STEP_MOTOR")
                 || gpio_direction_output(PAN_SERVO, 0)
-		|| gpio_direction_output(TILT_SERVO, 0);
+		|| gpio_direction_output(TILT_SERVO, 0)
+		|| gpio_direction_output(STEP_MOTOR, 0);
 	if (result != 0)
 	{
 		goto fail;
@@ -239,9 +244,6 @@ set_pulse_width(int index, char servo)
 	read_len = 0;
 
 	/* Initialize PWM Variable Values: */
-//	PULSE_LENGTH[0] = 1000; /* 1 ms */
-//	PULSE_LENGTH[1] = 7500; /* 7.5 ms */
-//	PULSE_LENGTH[2] = 15000; /* 15 ms */
 	PULSE_LENGTH[0] = 1000; /* 1 ms */
 	PULSE_LENGTH[1] = 1500; /* 1.5 ms */
 	PULSE_LENGTH[2] = 2000; /* 2.0 ms */
@@ -342,8 +344,10 @@ DMGturret_exit(void)
 	/* Turn Off & Release GPIO */
 	PWM_PULSE_OFF(PAN_SERVO);
 	PWM_PULSE_OFF(TILT_SERVO);
+	PWM_PULSE_OFF(STEP_MOTOR);
 	gpio_free(PAN_SERVO);
 	gpio_free(TILT_SERVO);
+	gpio_free(STEP_MOTOR);
 
 	/* Release OS Timer */
 	OIER &= ~(1<<4);
