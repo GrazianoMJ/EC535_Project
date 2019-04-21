@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcelable;
@@ -173,6 +174,7 @@ public class TurretControlActivity extends AppCompatActivity
         setSupportActionBar(toolbar);
         ImageButton cmdButton = findViewById(R.id.commandButton);
         cmdButton.setOnClickListener(new View.OnClickListener() {
+            @SuppressLint("SetTextI18n")
             @Override
             public void onClick(View v) {
                 if (!mTurrentConnected) {
@@ -183,7 +185,8 @@ public class TurretControlActivity extends AppCompatActivity
                 if (mCmdButtonIsUp) {
                     Log.d(TAG, "Command button pressed down");
                     mSpeechRecognizer.startListening(mSpeechIntent);
-                    mTextBox.setText("");
+                    mTextBox.setText("[Waiting for command...]");
+                    mTextBox.setTextColor(Color.GRAY);
                     mToast.setText("Say your command now...");
                     mToast.show();
                 } else {
@@ -459,6 +462,7 @@ public class TurretControlActivity extends AppCompatActivity
                 mTextBox.setText("Invalid command");
                 break;
         }
+        mTextBox.setTextColor(Color.BLACK);
         // send command to turret
         if (mBluetoothClient != null &&
                 cmd.getCommandName() != VoiceCommand.CommandName.INVALID) {
