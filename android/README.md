@@ -14,7 +14,7 @@ through captured speech and are sent over Bluetooth to a connected toy turret.
 
 
 ### Adjustment commands
-Note that a __tick__ is the smallest unit of movement the turret can support.
+Note that a __tick__ is the smallest unit of movement the turret can support. Currently a tick must be in the range of (0 to 10) inclusive.
 - __up X ticks__: Adjust turret pitch upward
 - __down X ticks__: Adjust turret pitch downward
 - __left X ticks__: Adjust turret yaw left
