@@ -140,9 +140,15 @@ public class TurretControlActivity extends AppCompatActivity
         Log.d(TAG, String.format("Connected to turret %s:%s",
                 mTurretBluetoothDevice.getName(), mTurretBluetoothDevice.getAddress()));
         mBluetoothClient = new BluetoothClient(socket, mTurretBluetoothDevice, TAG);
-        mToast.setText("Connected to turret!");
-        mToast.show();
+        this.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mToast.setText("Connected to turret!");
+                mToast.show();
+            }
+        });
         Log.d(TAG, "Spawning bluetooth client thread..");
+        mTurrentConnected = true;
         mBluetoothClient.run();
     }
 
@@ -165,14 +171,19 @@ public class TurretControlActivity extends AppCompatActivity
         setContentView(R.layout.activity_main);
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
-
         ImageButton cmdButton = findViewById(R.id.commandButton);
         cmdButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (!mTurrentConnected) {
+                    mToast.setText("Turret not connected yet!");
+                    mToast.show();
+                    return;
+                }
                 if (mCmdButtonIsUp) {
                     Log.d(TAG, "Command button pressed down");
                     mSpeechRecognizer.startListening(mSpeechIntent);
+                    mTextBox.setText("");
                     mToast.setText("Say your command now...");
                     mToast.show();
                 } else {
