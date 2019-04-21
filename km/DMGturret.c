@@ -5,6 +5,7 @@
 #include <linux/fs.h> /* everything... */
 #include <linux/errno.h> /* error codes */
 #include <linux/types.h> /* size_t */ 
+#include <linux/timer.h> /* timer functions */
 #include <asm/uaccess.h> /* copy_from/to_user */
 #include <asm/hardware.h>
 #include <asm/gpio.h>
@@ -17,9 +18,13 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define READ_BUFFER_SIZE (128)
 #define DEV_NAME "DMGturret"
 #define PWM_PERIOD 20000 /* 20 ms in us */
-#define PAN_SERVO 28
-#define TILT_SERVO 31
-#define STEP_MOTOR 29
+#define STEP_MOTOR_DRIVE 16
+#define STEP_MOTOR_DIRECTION 28
+#define STEP_MOTOR_ENABLE 9  
+#define STEP_MOTOR_FEEDBACK 113
+#define PAN_SERVO 29
+#define TILT_SERVO 30
+#define SOLENOID_ENABLE 31
 
 /* Declare Function Prototypes - Module File Operations */
 static int DMGturret_init(void);
@@ -30,11 +35,14 @@ static int DMGturret_release(struct inode *inode, struct file *filp);
 static void DMGturret_exit(void);
 
 /* Declare Function Prototypes - Auxiliary Operations */
-static bool PWM_PULSE_ON(uint8_t servo);
-static bool PWM_PULSE_OFF(uint8_t servo);
+static int step_motor_pwm_setup(unsigned gpio);
+static void step_motor_release(unsigned gpio);
+static bool GPIO_OUTPUT_ON(uint8_t servo);
+static bool GPIO_OUTPUT_OFF(uint8_t servo);
 static irqreturn_t handle_ost(int irq, void *dev_id);
 static bool parse_uint(const char *buf, uint32_t* num);
 static bool set_pulse_width(int index, char servo);
+static void hardware_timer_callback(unsigned long data);
 
 /* Set File Access Functions */
 struct file_operations DMGturret_fops = {
@@ -60,10 +68,11 @@ static char *read_buffer;
 static int write_len;
 static int read_len;
 
-/* Holds Servo State */
+/* Holds External Hardware State */
 static bool pan_servo_state = false;
 static bool tilt_servo_state = false;
 static bool step_motor_state = false;
+static bool solenoid_state = false;
 
 /* Holds Servo Pulse Width */
 static uint32_t pan_servo_pulse;
@@ -75,6 +84,9 @@ static uint32_t pwm_period_remain = PWM_PERIOD;
 
 /* Holds the Pulse Width  */
 static uint32_t PULSE_LENGTH[3];
+
+/* Holds the timer for the solenoid & stepper motor */
+static struct timer_list hardware_timer;
 
 /* Holds PWM State */
 typedef enum {
@@ -93,8 +105,43 @@ static uint32_t debug_counter = 0;
 #endif
 
 /* Auxiliary Function Definitions */
+static int
+step_motor_pwm_setup(unsigned gpio)
+{
+	// Check gpio to verify if it is PWM compatible
+	// Set up PWM if valid
+	if (gpio == GPIO16_PWM0) {
+		CKEN |= CKEN0_PWM0;
+		pxa_gpio_mode(GPIO16_PWM0_MD);
+		PWM_CTRL0 |= 0x3f;
+		PWM_PERVAL0 |= 0x3ff;
+		PWM_PWDUTY0 |= 0x1ff;
+	} else if (gpio == GPIO17_PWM1) {
+		CKEN |= CKEN1_PWM1;
+		pxa_gpio_mode(GPIO17_PWM1_MD);
+		PWM_CTRL1 |= 0x3f;
+	        PWM_PERVAL1 |= 0x3ff;
+		PWM_PWDUTY1 |= 0x1ff;
+	} else {
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static void
+step_motor_release(unsigned gpio)
+{
+	// Check gpio to verify it is PWM compatible
+	// Set PWM_PWDUTY to zero so output is disabled
+	if (gpio == GPIO16_PWM0)
+		PWM_PWDUTY0 = 0;
+	else if (gpio == GPIO17_PWM1)
+		PWM_PWDUTY1 = 0;
+}
+
 static bool
-PWM_PULSE_ON(uint8_t servo)
+GPIO_OUTPUT_ON(uint8_t servo)
 { 
 #ifndef SIM_MODE
 	pxa_gpio_set_value(servo, 1);
@@ -103,7 +150,7 @@ PWM_PULSE_ON(uint8_t servo)
 }
 
 static bool
-PWM_PULSE_OFF(uint8_t servo)
+GPIO_OUTPUT_OFF(uint8_t servo)
 {
 #ifndef SIM_MODE
 	pxa_gpio_set_value(servo, 0);
@@ -130,41 +177,40 @@ handle_ost(int irq, void *dev_id)
 			pwm_period_remain = (pan_servo_pulse < tilt_servo_pulse) ? PWM_PERIOD - tilt_servo_pulse : PWM_PERIOD - pan_servo_pulse;
 			CURRENT_PWM_STATE = (pan_servo_pulse < tilt_servo_pulse) ? PWM_STATE_PAN_TO_TILT :
 				    (pan_servo_pulse > tilt_servo_pulse) ? PWM_STATE_TILT_TO_PAN : PWM_STATE_EQUAL_ON;
-			pan_servo_state = PWM_PULSE_ON(PAN_SERVO);
-			tilt_servo_state = PWM_PULSE_ON(TILT_SERVO);
-			step_motor_state = (!step_motor_state) ? PWM_PULSE_ON(STEP_MOTOR) : PWM_PULSE_OFF(STEP_MOTOR);
+			pan_servo_state = GPIO_OUTPUT_ON(PAN_SERVO);
+			tilt_servo_state = GPIO_OUTPUT_ON(TILT_SERVO);
 			OSMR4 = (pan_servo_pulse < tilt_servo_pulse) ? pan_servo_pulse : tilt_servo_pulse;
 			break;
 		case PWM_STATE_EQUAL_ON: 
-			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
-			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
+			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
+			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
 			OSMR4 = pwm_period_remain;
 			break;
 		case PWM_STATE_PAN_TO_TILT:
-			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
+			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
 			CURRENT_PWM_STATE = PWM_STATE_TILT_ONLY;
 			OSMR4 = pwm_pulse_remain;
 			break;
 		case PWM_STATE_TILT_ONLY:
-			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
+			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
 			OSMR4 = pwm_period_remain;
 			break;
 		case PWM_STATE_TILT_TO_PAN:
-			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
+			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			CURRENT_PWM_STATE = PWM_STATE_PAN_ONLY;
 			OSMR4 = pwm_pulse_remain;
 			break;
 		case PWM_STATE_PAN_ONLY:
-			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
+			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
 			CURRENT_PWM_STATE = PWM_STATE_ALL_OFF;
 			OSMR4 = pwm_period_remain;
 			break;
 	}
 #ifdef SIM_MODE
-	if (debug_counter == 100) {
-		printk(KERN_INFO "Two seconds of cycles; Pan Pulse Width = %u | Tilt Pulse Width = %u\n", pan_servo_pulse, tilt_servo_pulse);
+	if (debug_counter == 1000) {
+		printk(KERN_INFO "Twenty seconds of cycles; Pan Pulse Width = %u | Tilt Pulse Width = %u\n", pan_servo_pulse, tilt_servo_pulse);
 		debug_counter = 1;
 	}
 #endif
@@ -198,6 +244,23 @@ set_pulse_width(int index, char servo)
 	return true;
 }
 
+static void
+hardware_timer_callback(unsigned long data)
+{
+	if (solenoid_state) {
+#ifdef SIM_MODE
+		printk(KERN_INFO "...solenoid now off after 2 seconds\n");
+#endif
+		solenoid_state = GPIO_OUTPUT_OFF(SOLENOID_ENABLE);
+	}
+	else if (step_motor_state) {
+#ifdef SIM_MODE
+		printk(KERN_INFO "...stepper motor now off after 4 seconds\n");
+#endif
+		step_motor_state = !(GPIO_OUTPUT_ON(STEP_MOTOR_ENABLE));
+	}
+}
+		
 /* Module File Operation Definitions */ static int DMGturret_init(void)
 {
 	int result;
@@ -214,10 +277,16 @@ set_pulse_width(int index, char servo)
 	/* Initialize GPIO Settings */
 	result = gpio_request(PAN_SERVO, "PAN_SERVO")
 		|| gpio_request(TILT_SERVO, "TILT_SERVO")
-		|| gpio_request(STEP_MOTOR, "STEP_MOTOR")
+		|| gpio_request(STEP_MOTOR_DRIVE, "STEP_MOTOR_DRIVE")
+		|| gpio_request(STEP_MOTOR_DIRECTION, "STEP_MOTOR_DIRECTION")
+		|| gpio_request(STEP_MOTOR_ENABLE, "STEP_MOTOR_ENABLE")
+		|| gpio_request(SOLENOID_ENABLE, "SOLENOID_ENABLE")
                 || gpio_direction_output(PAN_SERVO, 0)
 		|| gpio_direction_output(TILT_SERVO, 0)
-		|| gpio_direction_output(STEP_MOTOR, 0);
+		|| gpio_direction_output(STEP_MOTOR_ENABLE, 1) /* Enable is assert low to activate */
+		|| gpio_direction_output(STEP_MOTOR_DIRECTION, 0)
+		|| step_motor_pwm_setup(STEP_MOTOR_DRIVE)
+		|| gpio_direction_output(SOLENOID_ENABLE, 0);
 	if (result != 0)
 	{
 		goto fail;
@@ -280,6 +349,9 @@ set_pulse_width(int index, char servo)
 		OSCR4 = 0; /* Initialize the counter value (and start the counter) */
 	}
 
+	/* Setup hardware timer */
+	setup_timer(&hardware_timer, hardware_timer_callback, 0); 
+
 	return 0;
 
 fail:
@@ -315,6 +387,22 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 			return -EINVAL;
 		}
 	}
+	else if (write_buffer[0] == 's')
+	{
+#ifdef SIM_MODE
+		printk(KERN_INFO "Stepper Motor Activated...\n");
+#endif
+		step_motor_state = !(GPIO_OUTPUT_OFF(STEP_MOTOR_ENABLE));
+		mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(4000));
+	}
+	else if (write_buffer[0] == 'f')
+	{
+#ifdef SIM_MODE
+		printk(KERN_INFO "Solenoid Motor Activated...\n");
+#endif
+		solenoid_state = GPIO_OUTPUT_ON(SOLENOID_ENABLE);
+		mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(2000));
+	}
 	return count;
 }
 static int
@@ -342,16 +430,25 @@ DMGturret_exit(void)
 	}
 	
 	/* Turn Off & Release GPIO */
-	PWM_PULSE_OFF(PAN_SERVO);
-	PWM_PULSE_OFF(TILT_SERVO);
-	PWM_PULSE_OFF(STEP_MOTOR);
+	GPIO_OUTPUT_OFF(PAN_SERVO);
+	GPIO_OUTPUT_OFF(TILT_SERVO);
+	step_motor_release(STEP_MOTOR_DRIVE);
+	GPIO_OUTPUT_OFF(STEP_MOTOR_DIRECTION);
+	GPIO_OUTPUT_OFF(STEP_MOTOR_ENABLE);
+	GPIO_OUTPUT_OFF(SOLENOID_ENABLE);
 	gpio_free(PAN_SERVO);
 	gpio_free(TILT_SERVO);
-	gpio_free(STEP_MOTOR);
+	gpio_free(STEP_MOTOR_DRIVE);
+	gpio_free(STEP_MOTOR_DIRECTION);
+	gpio_free(STEP_MOTOR_ENABLE);
+	gpio_free(SOLENOID_ENABLE);
 
 	/* Release OS Timer */
 	OIER &= ~(1<<4);
 	free_irq(IRQ_OST_4_11, NULL);
+	
+	/* Release hardware timer */
+	del_timer(&hardware_timer);
 
 	printk(KERN_INFO "...module removed!\n");
 }
