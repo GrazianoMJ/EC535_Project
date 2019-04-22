@@ -196,6 +196,7 @@ parse_uint(const char* buf, uint32_t* num)
 static bool
 set_pulse_width(uint32_t width, char servo)
 {
+	width = min(MAX_PULSE, max(MIN_PULSE, width));
 #ifdef SIM_MODE
 	printk(KERN_INFO "Set %c: %d\n", servo, width);
 #endif
@@ -315,7 +316,7 @@ static ssize_t
 DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 {
 	uint32_t value; /* First argument for any command */
-	char control_interface = '\0';
+	bool success = true;
 	if (count > WRITE_BUFFER_SIZE)
 		count = WRITE_BUFFER_SIZE;
 	if (copy_from_user(write_buffer, buf, count))
@@ -340,26 +341,20 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 			/* TODO: Prime is not yet implemented */
 			return -EINVAL;
 		case 'D':
-			value = max(MIN_PULSE, pan_servo_pulse - value * PULSE_GRANULARITY);
-			control_interface = 'p';
+			success = set_pulse_width(pan_servo_pulse - value * PULSE_GRANULARITY, 'p');
 			break;
 		case 'U':
-			value = min(MAX_PULSE, pan_servo_pulse + value * PULSE_GRANULARITY);
-			control_interface = 'p';
+			success = set_pulse_width(pan_servo_pulse + value * PULSE_GRANULARITY, 'p');
 			break;
 		case 'L':
-			value = max(MIN_PULSE, tilt_servo_pulse - value * PULSE_GRANULARITY);
-			control_interface = 't';
+			success = set_pulse_width(tilt_servo_pulse - value * PULSE_GRANULARITY, 't');
 			break;
 		case 'R':
-			value = min(MAX_PULSE, tilt_servo_pulse + value * PULSE_GRANULARITY);
-			control_interface = 't';
+			success = set_pulse_width(tilt_servo_pulse + value * PULSE_GRANULARITY, 't');
 			break;
 		}
-		if (!set_pulse_width(value, control_interface))
+		if (!success)
 		{
-			printk(KERN_INFO "Unable to set pulse width %u on %c\n",
-				       	value, control_interface);
 			return -EINVAL;
 		}
 	}
