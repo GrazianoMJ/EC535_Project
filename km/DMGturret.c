@@ -11,6 +11,8 @@
 #include <linux/interrupt.h>
 #include <asm/arch/pxa-regs.h>
 
+#include <linux/time.h>
+
 MODULE_LICENSE("Dual BSD/GPL");
 
 #define WRITE_BUFFER_SIZE (64)
@@ -19,7 +21,13 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define PWM_PERIOD 20000 /* 20 ms in us */
 #define PAN_SERVO 28
 #define TILT_SERVO 31
-#define OIER_E4 (1 << 4) /* pxa-regs.h only gives us OIER_E0 - 3 */
+
+/* pxa-regs.h only gives us stuff for OS tiemr 4. Add 5 from the Intel manual. */
+#define OIER_E4 (1 << 4)
+#define OIER_E5 (1 << 5)
+#define OSMR5 __REG(0x40A00084)
+#define OMCR5 __REG(0x40A000C4)
+#define OSCR5 __REG(0x40A00044)
 
 /* Declare Function Prototypes - Module File Operations */
 static int DMGturret_init(void);
@@ -30,8 +38,6 @@ static int DMGturret_release(struct inode *inode, struct file *filp);
 static void DMGturret_exit(void);
 
 /* Declare Function Prototypes - Auxiliary Operations */
-static bool PWM_PULSE_ON(uint8_t servo);
-static bool PWM_PULSE_OFF(uint8_t servo);
 static irqreturn_t handle_ost(int irq, void *dev_id);
 static bool parse_uint(const char *buf, uint32_t* num);
 
@@ -64,12 +70,12 @@ static bool pan_servo_state = false;
 static bool tilt_servo_state = false;
 
 /* Holds Servo Pulse Width */
-static uint32_t pan_servo_pulse;
-static uint32_t tilt_servo_pulse;
+static volatile uint32_t pan_servo_pulse;
+static volatile uint32_t tilt_servo_pulse;
 
 /* Holds PWM timer remaining time */
-static uint32_t pwm_pulse_remain = 0;
-static uint32_t pwm_period_remain = PWM_PERIOD;
+static uint32_t pan_period_remain = PWM_PERIOD;
+static uint32_t tilt_period_remain = PWM_PERIOD;
 
 /* Holds the Pulse Width  */
 #define MIN_PULSE (1000u) /* 1 ms */
@@ -79,25 +85,16 @@ static uint32_t pwm_period_remain = PWM_PERIOD;
 #define PULSE_LENGTH(index) ((index) * PULSE_GRANULARITY + MIN_PULSE)
 #define DEFAULT_PULSE_INDEX (PULSE_COUNT / 2)
 
-/* Holds PWM State */
-typedef enum {
-	PWM_STATE_ALL_OFF,
-	PWM_STATE_EQUAL_ON,
-	PWM_STATE_PAN_TO_TILT,
-	PWM_STATE_TILT_ONLY,
-	PWM_STATE_TILT_TO_PAN,
-	PWM_STATE_PAN_ONLY
-} pwm_state;
-static pwm_state current_pwm_state = PWM_STATE_ALL_OFF;
-
-/* Holds the debug counter (SIMULATION ONLY)*/
 #ifdef SIM_MODE
-static uint32_t debug_counter = 0;
+/* Measure the actual PWM time */
+static volatile uint32_t pan_cycles = 0;
+static volatile uint32_t tilt_cycles = 0;
+static volatile uint32_t debug_start_ns = 0;
 #endif
 
 /* Auxiliary Function Definitions */
-static bool
-PWM_PULSE_ON(uint8_t servo)
+static inline bool
+pwm_pulse_on(uint8_t servo)
 { 
 #ifndef SIM_MODE
 	pxa_gpio_set_value(servo, 1);
@@ -105,9 +102,9 @@ PWM_PULSE_ON(uint8_t servo)
 	return true;
 }
 
-static bool
-PWM_PULSE_OFF(uint8_t servo)
-{
+static inline bool
+pwm_pulse_off(uint8_t servo)
+{ 
 #ifndef SIM_MODE
 	pxa_gpio_set_value(servo, 0);
 #endif
@@ -118,67 +115,56 @@ static irqreturn_t
 handle_ost(int irq, void *dev_id)
 {
 	/* All OS timers 4-11 are handled here. Check which one ticked. */
-	if (!(OSSR & OIER_E4))
+	if (OSSR & OIER_E4) /* Pan PWM interrupt */
+	{
+		if (pan_servo_state)
+		{
+			/* Just finished a pulse. Finish the PWM period. */
+			pan_servo_state = pwm_pulse_off(PAN_SERVO);
+			OSMR4 = pan_period_remain;
+		}
+		else
+		{
+			/* Just finished a PWM period. Start a new pulse. */
+			pan_servo_state = pwm_pulse_on(PAN_SERVO);
+			pan_period_remain = PWM_PERIOD - pan_servo_pulse;
+			OSMR4 = pan_servo_pulse;
+#ifdef SIM_MODE
+			pan_cycles += 1;
+#endif
+		}
+
+		OSSR = OIER_E4; /* Mark the pan timer as handled */
+		OSCR4 = 0; /* Reset the counter. */
+		return IRQ_HANDLED;
+	}
+	else if (OSSR & OIER_E5) /* Tilt PWM interrupt */
+	{
+		if (tilt_servo_state)
+		{
+			/* Just finished a pulse. Finish the PWM period. */
+			tilt_servo_state = pwm_pulse_off(TILT_SERVO);
+			OSMR5 = tilt_period_remain;
+		}
+		else
+		{
+			/* Just finished a PWM period. Start a new pulse. */
+			tilt_servo_state = pwm_pulse_on(TILT_SERVO);
+			tilt_period_remain = PWM_PERIOD - tilt_servo_pulse;
+			OSMR5 = tilt_servo_pulse;
+#ifdef SIM_MODE
+			tilt_cycles += 1;
+#endif
+		}
+
+		OSSR = OIER_E5; /* Mark the tilt timer as handled */
+		OSCR5 = 0; /* Reset the counter. */
+		return IRQ_HANDLED;
+	}
+	else
 	{
 		return IRQ_NONE;
 	}
-	
-	/*
-	 * Handle PWM Signals
-	 * Align them to start at the same time. Trigger each followup OST tick
-	 * to happen when the next-soonest PWM falling edge is until none remain.
-	 * Then schedule the next rising edge.
-	 */
-	switch (current_pwm_state) {
-		case PWM_STATE_ALL_OFF: 
-#ifdef SIM_MODE
-			debug_counter++;
-#endif
-			pwm_pulse_remain = (pan_servo_pulse < tilt_servo_pulse) ? tilt_servo_pulse - pan_servo_pulse : pan_servo_pulse - tilt_servo_pulse;
-			pwm_period_remain = (pan_servo_pulse < tilt_servo_pulse) ? PWM_PERIOD - tilt_servo_pulse : PWM_PERIOD - pan_servo_pulse;
-			current_pwm_state = (pan_servo_pulse < tilt_servo_pulse) ? PWM_STATE_PAN_TO_TILT :
-				    (pan_servo_pulse > tilt_servo_pulse) ? PWM_STATE_TILT_TO_PAN : PWM_STATE_EQUAL_ON;
-			pan_servo_state = PWM_PULSE_ON(PAN_SERVO);
-			tilt_servo_state = PWM_PULSE_ON(TILT_SERVO);
-			OSMR4 = (pan_servo_pulse < tilt_servo_pulse) ? pan_servo_pulse : tilt_servo_pulse;
-			break;
-		case PWM_STATE_EQUAL_ON: 
-			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
-			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
-			current_pwm_state = PWM_STATE_ALL_OFF;
-			OSMR4 = pwm_period_remain;
-			break;
-		case PWM_STATE_PAN_TO_TILT:
-			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
-			current_pwm_state = PWM_STATE_TILT_ONLY;
-			OSMR4 = pwm_pulse_remain;
-			break;
-		case PWM_STATE_TILT_ONLY:
-			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
-			current_pwm_state = PWM_STATE_ALL_OFF;
-			OSMR4 = pwm_period_remain;
-			break;
-		case PWM_STATE_TILT_TO_PAN:
-			tilt_servo_state = PWM_PULSE_OFF(TILT_SERVO);
-			current_pwm_state = PWM_STATE_PAN_ONLY;
-			OSMR4 = pwm_pulse_remain;
-			break;
-		case PWM_STATE_PAN_ONLY:
-			pan_servo_state = PWM_PULSE_OFF(PAN_SERVO);
-			current_pwm_state = PWM_STATE_ALL_OFF;
-			OSMR4 = pwm_period_remain;
-			break;
-	}
-#ifdef SIM_MODE
-	if (debug_counter == 1000) {
-		printk(KERN_INFO "Twenty seconds of cycles; Pan Pulse Width = %u | Tilt Pulse Width = %u\n", pan_servo_pulse, tilt_servo_pulse);
-		debug_counter = 1;
-	}
-#endif
-	/* Mark the tick as handled by writing a 1 in this timer's status. */
-	OSSR = OIER_E4;
-	OSCR4 = 0; /* Reset the counter. */
-	return IRQ_HANDLED;
 }
 
 static bool
@@ -220,6 +206,9 @@ set_pulse_width(uint32_t width, char servo)
 static int DMGturret_init(void)
 {
 	int result;
+#ifdef SIM_MODE
+	struct timespec now;
+#endif
 
 	printk(KERN_INFO "Installing module...\n");
 
@@ -274,6 +263,7 @@ static int DMGturret_init(void)
                 printk("OST irq %d acquired successfully \n", IRQ_OST_4_11);
 
 		OMCR4 = 0xcc;
+		OMCR5 = 0xcc;
 		/* 1100 1100 .- 001: 1/32768th of a second. This one continues while sleeping.
 		 * ^^\/ ^\ / +- 010: 1 ms
 		 * |||  | `--+- 011: 1 s
@@ -289,8 +279,19 @@ static int DMGturret_init(void)
 		OSMR4 = PWM_PERIOD; /* Number of ticks before the IRQ is triggered
 		                 * For 1us clock, 500k => 0.5 seconds.
 		                 */
+		OSMR5 = PWM_PERIOD;
+
 		OIER |= OIER_E4;
-		OSCR4 = 0; /* Initialize the counter value (and start the counter) */
+	        OIER |= OIER_E5;
+
+#ifdef SIM_MODE
+		getnstimeofday(&now);
+		debug_start_ns = now.tv_nsec;
+#endif
+
+		/* Initialize the counter values (and start the counter) */
+		OSCR4 = 0;
+		OSCR5 = 0;
 	}
 
 	return 0;
@@ -369,6 +370,9 @@ DMGturret_release(struct inode *inode, struct file *filp)
 static void
 DMGturret_exit(void)
 {
+#ifdef SIM_MODE
+	struct timespec now;
+#endif
 	/* Free Major Number */
 	unregister_chrdev(DMGturret_major, DEV_NAME);
 
@@ -385,14 +389,21 @@ DMGturret_exit(void)
 	}
 	
 	/* Turn Off & Release GPIO */
-	PWM_PULSE_OFF(PAN_SERVO);
-	PWM_PULSE_OFF(TILT_SERVO);
+	pwm_pulse_off(PAN_SERVO);
+	pwm_pulse_off(TILT_SERVO);
 	gpio_free(PAN_SERVO);
 	gpio_free(TILT_SERVO);
 
 	/* Release OS Timer */
 	OIER &= ~OIER_E4;
+	OIER &= ~OIER_E5;
 	free_irq(IRQ_OST_4_11, NULL);
+
+#ifdef SIM_MODE
+	getnstimeofday(&now);
+	printk(KERN_INFO "Pan average PWM period (%u cycles): %ld us\n", pan_cycles);
+	printk(KERN_INFO "Tilt average PWM period (%u cycles): %ld us\n", tilt_cycles);
+#endif
 
 	printk(KERN_INFO "...module removed!\n");
 }
