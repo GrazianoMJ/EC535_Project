@@ -53,6 +53,7 @@ public class TurretControlActivity extends AppCompatActivity
     private BluetoothClient mBluetoothClient;
     private BluetoothConnector mBluetoothConnector;
     private ArrayList<String> mVoiceCaptures;
+    // TODO: Don't rely on hardcoding MAC address
     private static final String TURRET_MAC_ADDRESS = "E8:2A:EA:4A:04:FB";
     private static final int REQUEST_ENABLE_BT_ID = 299;
     private static final int PERMISSIONS_REQUEST_RECORD_AUDIO_ID = 300;
@@ -90,6 +91,11 @@ public class TurretControlActivity extends AppCompatActivity
                             break;
                         }
                     }
+
+                }
+                if (!mTurrentDiscovered) {
+                    mToast.setText("Turret not found!");
+                    mToast.show();
                 }
             } else if (BluetoothDevice.ACTION_UUID.equals(action)) {
                 Log.d(TAG, "SDP asysnc call results ready");
