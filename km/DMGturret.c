@@ -82,6 +82,7 @@ static uint32_t tilt_servo_pulse;
 /* Holds PWM timer remaining time */
 static uint32_t pwm_pulse_remain = 0;
 static uint32_t pwm_period_remain = PWM_PERIOD;
+struct timespec start;
 
 /* Holds the timer for the solenoid & stepper motor */
 static struct timer_list hardware_timer;
@@ -104,6 +105,13 @@ typedef enum {
 	PWM_STATE_PAN_ONLY
 } pwm_state;
 static pwm_state current_pwm_state = PWM_STATE_ALL_OFF;
+
+/* Holds Fire/Prime State */
+typedef enum {
+	TURRET_NO_PRIME,
+	TURRET_PRIME
+} turret_state;
+static turret_state current_turret_state = TURRET_NO_PRIME;
 
 /* Holds the debug counter (SIMULATION ONLY)*/
 #ifdef SIM_MODE
@@ -167,6 +175,8 @@ GPIO_OUTPUT_OFF(uint8_t servo)
 static irqreturn_t
 handle_ost(int irq, void *dev_id)
 {
+	struct timespec now;
+
 	/* All OS timers 4-11 are handled here. Check which one ticked. */
 	if (!(OSSR & OIER_E4))
 	{
@@ -184,39 +194,45 @@ handle_ost(int irq, void *dev_id)
 #ifdef SIM_MODE
 			debug_counter++;
 #endif
-			pwm_pulse_remain = (pan_servo_pulse < tilt_servo_pulse) ? tilt_servo_pulse - pan_servo_pulse : pan_servo_pulse - tilt_servo_pulse;
-			pwm_period_remain = (pan_servo_pulse < tilt_servo_pulse) ? PWM_PERIOD - tilt_servo_pulse : PWM_PERIOD - pan_servo_pulse;
+//			pwm_pulse_remain = (pan_servo_pulse < tilt_servo_pulse) ? tilt_servo_pulse - pan_servo_pulse : pan_servo_pulse - tilt_servo_pulse;
+//			pwm_period_remain = (pan_servo_pulse < tilt_servo_pulse) ? PWM_PERIOD - tilt_servo_pulse : PWM_PERIOD - pan_servo_pulse;
 			current_pwm_state = (pan_servo_pulse < tilt_servo_pulse) ? PWM_STATE_PAN_TO_TILT :
 				    (pan_servo_pulse > tilt_servo_pulse) ? PWM_STATE_TILT_TO_PAN : PWM_STATE_EQUAL_ON;
 			pan_servo_state = GPIO_OUTPUT_ON(PAN_SERVO);
 			tilt_servo_state = GPIO_OUTPUT_ON(TILT_SERVO);
+			start = now;
 			OSMR4 = (pan_servo_pulse < tilt_servo_pulse) ? pan_servo_pulse : tilt_servo_pulse;
 			break;
 		case PWM_STATE_EQUAL_ON: 
 			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
 			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			current_pwm_state = PWM_STATE_ALL_OFF;
-			OSMR4 = pwm_period_remain;
+			getnstimeofday(&now);
+			OSMR4 = PWM_PERIOD - ((now.tv_nsec - start.tv_nsec)/1000);
 			break;
 		case PWM_STATE_PAN_TO_TILT:
 			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
 			current_pwm_state = PWM_STATE_TILT_ONLY;
-			OSMR4 = pwm_pulse_remain;
+			getnstimeofday(&now);
+			OSMR4 = tilt_servo_pulse - ((now.tv_nsec - start.tv_nsec)/1000);
 			break;
 		case PWM_STATE_TILT_ONLY:
 			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			current_pwm_state = PWM_STATE_ALL_OFF;
-			OSMR4 = pwm_period_remain;
+			getnstimeofday(&now);
+			OSMR4 = PWM_PERIOD - ((now.tv_nsec - start.tv_nsec)/1000);
 			break;
 		case PWM_STATE_TILT_TO_PAN:
 			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			current_pwm_state = PWM_STATE_PAN_ONLY;
-			OSMR4 = pwm_pulse_remain;
+			getnstimeofday(&now);
+			OSMR4 = pan_servo_pulse - ((now.tv_nsec - start.tv_nsec)/1000);
 			break;
 		case PWM_STATE_PAN_ONLY:
 			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
 			current_pwm_state = PWM_STATE_ALL_OFF;
-			OSMR4 = pwm_period_remain;
+			getnstimeofday(&now);
+			OSMR4 = PWM_PERIOD - ((now.tv_nsec - start.tv_nsec)/1000);
 			break;
 	}
 #ifdef SIM_MODE
@@ -274,12 +290,14 @@ hardware_timer_callback(unsigned long data)
 		printk(KERN_INFO "...solenoid now off after 2 seconds\n");
 #endif
 		solenoid_state = GPIO_OUTPUT_OFF(SOLENOID_ENABLE);
+		current_turret_state = TURRET_NO_PRIME;
 	}
 	else if (step_motor_state) {
 #ifdef SIM_MODE
 		printk(KERN_INFO "...stepper motor now off after 4 seconds\n");
 #endif
 		step_motor_state = !(GPIO_OUTPUT_ON(STEP_MOTOR_ENABLE));
+		current_turret_state = TURRET_PRIME;
 	}
 }
 		
@@ -414,26 +432,30 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 		switch (write_buffer[0])
 		{
 		case 'F':
+			if (current_turret_state == TURRET_PRIME) { 
 #ifdef SIM_MODE
-			printk(KERN_INFO "Solenoid Activated...\n");			
+				printk(KERN_INFO "Solenoid Activated...\n");			
 #endif
-			solenoid_state = GPIO_OUTPUT_ON(SOLENOID_ENABLE);
-			mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(2000));
-			success = true;
+				solenoid_state = GPIO_OUTPUT_ON(SOLENOID_ENABLE);
+				mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(2000));
+				success = true;
+			}
 			break;
 		case 'P':
+			if (current_turret_state == TURRET_NO_PRIME) {
 #ifdef SIM_MODE
-			printk(KERN_INFO "Stepper Motor Activated...\n");
+				printk(KERN_INFO "Stepper Motor Activated...\n");
 #endif
-			step_motor_state = !(GPIO_OUTPUT_OFF(STEP_MOTOR_ENABLE));
-			mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(4000));
-			success = true;
+				step_motor_state = !(GPIO_OUTPUT_OFF(STEP_MOTOR_ENABLE));
+				mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(4000));
+				success = true;
+			}
 			break;
 		case 'D':
-			success = set_pulse_width(tilt_servo_pulse + value * PULSE_GRANULARITY, 't');
+			success = set_pulse_width(tilt_servo_pulse - value * PULSE_GRANULARITY, 't');
 			break;
 		case 'U':
-			success = set_pulse_width(tilt_servo_pulse - value * PULSE_GRANULARITY, 't');
+			success = set_pulse_width(tilt_servo_pulse + value * PULSE_GRANULARITY, 't');
 			break;
 		case 'L':
 			success = set_pulse_width(pan_servo_pulse - value * PULSE_GRANULARITY, 'p');
