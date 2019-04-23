@@ -184,7 +184,8 @@ public class TurretControlActivity extends AppCompatActivity
         setContentView(R.layout.activity_main);
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
-        ImageButton cmdButton = findViewById(R.id.commandButton);
+        final ImageButton cmdButton = findViewById(R.id.commandButton);
+        cmdButton.setImageResource(R.drawable.button_normal_small);
         cmdButton.setOnClickListener(new View.OnClickListener() {
             @SuppressLint("SetTextI18n")
             @Override
@@ -195,6 +196,7 @@ public class TurretControlActivity extends AppCompatActivity
                     return;
                 }
                 if (mCmdButtonIsUp) {
+                    cmdButton.setImageResource(R.drawable.button_pressed_small);
                     Log.d(TAG, "Command button pressed down");
                     mSpeechRecognizer.startListening(mSpeechIntent);
                     mTextBox.setText("[Waiting for command...]");
@@ -202,6 +204,7 @@ public class TurretControlActivity extends AppCompatActivity
                     mToast.setText("Say your command now...");
                     mToast.show();
                 } else {
+                    cmdButton.setImageResource(R.drawable.button_normal_small);
                     Log.d(TAG, "Command button released");
                     mToast.setText("Processing your command...");
                     mToast.show();
