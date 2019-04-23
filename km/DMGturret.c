@@ -83,7 +83,7 @@ static uint32_t pwm_pulse_remain = 0;
 static uint32_t pwm_period_remain = PWM_PERIOD;
 
 /* Holds the Pulse Width  */
-static uint32_t PULSE_LENGTH[3];
+static uint32_t PULSE_LENGTH[10];
 
 /* Holds the timer for the solenoid & stepper motor */
 static struct timer_list hardware_timer;
@@ -235,7 +235,7 @@ parse_uint(const char* buf, uint32_t* num)
 static bool
 set_pulse_width(int index, char servo)
 {
-	if (index < 0 || index > 2 || (servo != 'p' && servo != 't'))
+	if (index < 0 || index > 9 || (servo != 'p' && servo != 't'))
 	{
 		return false;
 	}
@@ -314,11 +314,18 @@ hardware_timer_callback(unsigned long data)
 
 	/* Initialize PWM Variable Values: */
 	PULSE_LENGTH[0] = 1000; /* 1 ms */
-	PULSE_LENGTH[1] = 1500; /* 1.5 ms */
-	PULSE_LENGTH[2] = 2000; /* 2.0 ms */
+	PULSE_LENGTH[1] = 1100;
+	PULSE_LENGTH[2] = 1200;
+	PULSE_LENGTH[3] = 1300;
+	PULSE_LENGTH[4] = 1400;
+	PULSE_LENGTH[5] = 1500;
+	PULSE_LENGTH[6] = 1600;
+	PULSE_LENGTH[7] = 1700;
+	PULSE_LENGTH[8] = 1800;
+	PULSE_LENGTH[9] = 1900;
 
-	pan_servo_pulse = PULSE_LENGTH[1];
-	tilt_servo_pulse = PULSE_LENGTH[1];
+	pan_servo_pulse = PULSE_LENGTH[5];
+	tilt_servo_pulse = PULSE_LENGTH[5];
 
 	/* Initialize OS Timer for Pulse Width Modulation */
 	if (request_irq(IRQ_OST_4_11, &handle_ost, 0, DEV_NAME, NULL) != 0) {
