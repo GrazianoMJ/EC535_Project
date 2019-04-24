@@ -27,6 +27,15 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define SOLENOID_ENABLE 31
 #define OIER_E4 (1 << 4) /* pxa-regs.h only gives us OIER_E0 - 3 */
 
+/*
+ * OSCR (OSCR0 in Intel manual) increments on every rising edge of the
+ * 3.25 MHz clock, i.e. 20000 us happens on exactly 65000 tics.
+ *
+ * Avoid big multipliers and dividers. 3250 kHz / 1000 == 13/4.
+ */
+#define US_TO_OSCR_TICS(ms) ((ms)*13/4)
+#define OSCR_TICS_TO_US(tics) ((tics)*4/13)
+
 /* Declare Function Prototypes - Module File Operations */
 static int DMGturret_init(void);
 static int DMGturret_open(struct inode *inode, struct file *filp);
@@ -79,10 +88,8 @@ static bool solenoid_state = false;
 static uint32_t pan_servo_pulse;
 static uint32_t tilt_servo_pulse;
 
-/* Holds PWM timer remaining time */
-static uint32_t pwm_pulse_remain = 0;
-static uint32_t pwm_period_remain = PWM_PERIOD;
-struct timespec start;
+/* Holds PWM timer remaining time from OSCR0 */
+uint32_t pwm_start;
 
 /* Holds the timer for the solenoid & stepper motor */
 static struct timer_list hardware_timer;
@@ -175,8 +182,6 @@ GPIO_OUTPUT_OFF(uint8_t servo)
 static irqreturn_t
 handle_ost(int irq, void *dev_id)
 {
-	struct timespec now;
-
 	/* All OS timers 4-11 are handled here. Check which one ticked. */
 	if (!(OSSR & OIER_E4))
 	{
@@ -194,45 +199,42 @@ handle_ost(int irq, void *dev_id)
 #ifdef SIM_MODE
 			debug_counter++;
 #endif
-//			pwm_pulse_remain = (pan_servo_pulse < tilt_servo_pulse) ? tilt_servo_pulse - pan_servo_pulse : pan_servo_pulse - tilt_servo_pulse;
-//			pwm_period_remain = (pan_servo_pulse < tilt_servo_pulse) ? PWM_PERIOD - tilt_servo_pulse : PWM_PERIOD - pan_servo_pulse;
 			current_pwm_state = (pan_servo_pulse < tilt_servo_pulse) ? PWM_STATE_PAN_TO_TILT :
 				    (pan_servo_pulse > tilt_servo_pulse) ? PWM_STATE_TILT_TO_PAN : PWM_STATE_EQUAL_ON;
 			pan_servo_state = GPIO_OUTPUT_ON(PAN_SERVO);
 			tilt_servo_state = GPIO_OUTPUT_ON(TILT_SERVO);
-			start = now;
+			pwm_start = OSCR;
 			OSMR4 = (pan_servo_pulse < tilt_servo_pulse) ? pan_servo_pulse : tilt_servo_pulse;
 			break;
 		case PWM_STATE_EQUAL_ON: 
 			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
 			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			current_pwm_state = PWM_STATE_ALL_OFF;
-			getnstimeofday(&now);
-			OSMR4 = PWM_PERIOD - ((now.tv_nsec - start.tv_nsec)/1000);
+			OSMR4 = PWM_PERIOD - OSCR_TICS_TO_US(OSCR-pwm_start);
 			break;
 		case PWM_STATE_PAN_TO_TILT:
 			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
 			current_pwm_state = PWM_STATE_TILT_ONLY;
-			getnstimeofday(&now);
-			OSMR4 = tilt_servo_pulse - ((now.tv_nsec - start.tv_nsec)/1000);
+			printk(KERN_INFO "PWM f p\n");
+			OSMR4 = tilt_servo_pulse - OSCR_TICS_TO_US(OSCR-pwm_start);
 			break;
 		case PWM_STATE_TILT_ONLY:
 			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			current_pwm_state = PWM_STATE_ALL_OFF;
-			getnstimeofday(&now);
-			OSMR4 = PWM_PERIOD - ((now.tv_nsec - start.tv_nsec)/1000);
+			printk(KERN_INFO "PWM f t\n");
+			OSMR4 = PWM_PERIOD - OSCR_TICS_TO_US(OSCR-pwm_start);
 			break;
 		case PWM_STATE_TILT_TO_PAN:
 			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			current_pwm_state = PWM_STATE_PAN_ONLY;
-			getnstimeofday(&now);
-			OSMR4 = pan_servo_pulse - ((now.tv_nsec - start.tv_nsec)/1000);
+			printk(KERN_INFO "PWM f t\n");
+			OSMR4 = pan_servo_pulse - OSCR_TICS_TO_US(OSCR-pwm_start);
 			break;
 		case PWM_STATE_PAN_ONLY:
 			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
 			current_pwm_state = PWM_STATE_ALL_OFF;
-			getnstimeofday(&now);
-			OSMR4 = PWM_PERIOD - ((now.tv_nsec - start.tv_nsec)/1000);
+			printk(KERN_INFO "PWM f p\n");
+			OSMR4 = PWM_PERIOD - OSCR_TICS_TO_US(OSCR-pwm_start);
 			break;
 	}
 #ifdef SIM_MODE
