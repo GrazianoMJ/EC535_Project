@@ -19,9 +19,9 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define DEV_NAME "DMGturret"
 #define PWM_PERIOD 20000 /* 20 ms in us */
 #define STEP_MOTOR_DRIVE 16
-#define STEP_MOTOR_DIRECTION 28
+#define STEP_MOTOR_DIRECTION 113
 #define STEP_MOTOR_ENABLE 9  
-#define STEP_MOTOR_FEEDBACK 113
+#define STEP_MOTOR_FEEDBACK 28
 #define PAN_SERVO 29
 #define TILT_SERVO 30
 #define SOLENOID_ENABLE 31
@@ -44,6 +44,7 @@ static irqreturn_t handle_ost(int irq, void *dev_id);
 static bool parse_uint(const char *buf, uint32_t* num);
 static bool set_pulse_width(uint32_t width, char servo);
 static void hardware_timer_callback(unsigned long data);
+static irqreturn_t turret_prime_stop(int irq, void *dev_id);
 
 /* Set File Access Functions */
 struct file_operations DMGturret_fops = {
@@ -104,6 +105,15 @@ typedef enum {
 	PWM_STATE_PAN_ONLY
 } pwm_state;
 static pwm_state current_pwm_state = PWM_STATE_ALL_OFF;
+
+/* Holds Turret Firing State */
+typedef enum {
+	TURRET_STANDBY,
+	TURRET_PRIMING,
+	TURRET_READY,
+	TURRET_FIRING
+} turret_state;
+static turret_state current_turret_state = TURRET_STANDBY;
 
 /* Holds the debug counter (SIMULATION ONLY)*/
 #ifdef SIM_MODE
@@ -269,24 +279,37 @@ set_pulse_width(uint32_t width, char servo)
 static void
 hardware_timer_callback(unsigned long data)
 {
-	if (solenoid_state) {
+	if (current_turret_state == TURRET_FIRING) {
 #ifdef SIM_MODE
 		printk(KERN_INFO "...solenoid now off after 2 seconds\n");
 #endif
 		solenoid_state = GPIO_OUTPUT_OFF(SOLENOID_ENABLE);
+		current_turret_state = TURRET_STANDBY;
 	}
-	else if (step_motor_state) {
+	else if (current_turret_state == TURRET_PRIMING) {
 #ifdef SIM_MODE
-		printk(KERN_INFO "...stepper motor now off after 4 seconds\n");
+		printk(KERN_INFO "...stepper motor now off after 10 seconds\n");
 #endif
 		step_motor_state = !(GPIO_OUTPUT_ON(STEP_MOTOR_ENABLE));
+		current_turret_state = TURRET_READY;
 	}
+}
+
+static irqreturn_t
+turret_prime_stop(int irq, void *dev_id)
+{
+	if (current_turret_state == TURRET_PRIMING) {
+		step_motor_state = !(GPIO_OUTPUT_ON(STEP_MOTOR_ENABLE));
+		current_turret_state = TURRET_READY;
+	}
+	return IRQ_HANDLED;
 }
 		
 /* Module File Operation Definitions */
 static int DMGturret_init(void)
 {
 	int result;
+	int feedback_irq;
 
 	printk(KERN_INFO "Installing module...\n");
 
@@ -303,11 +326,13 @@ static int DMGturret_init(void)
 		|| gpio_request(STEP_MOTOR_DRIVE, "STEP_MOTOR_DRIVE")
 		|| gpio_request(STEP_MOTOR_DIRECTION, "STEP_MOTOR_DIRECTION")
 		|| gpio_request(STEP_MOTOR_ENABLE, "STEP_MOTOR_ENABLE")
+		|| gpio_request(STEP_MOTOR_FEEDBACK, "STEP_MOTOR_FEEDBACK")
 		|| gpio_request(SOLENOID_ENABLE, "SOLENOID_ENABLE")
                 || gpio_direction_output(PAN_SERVO, 0)
 		|| gpio_direction_output(TILT_SERVO, 0)
 		|| gpio_direction_output(STEP_MOTOR_ENABLE, 1) /* Enable is assert low to activate */
 		|| gpio_direction_output(STEP_MOTOR_DIRECTION, 0)
+		|| gpio_direction_input(STEP_MOTOR_FEEDBACK)
 		|| step_motor_pwm_setup(STEP_MOTOR_DRIVE)
 		|| gpio_direction_output(SOLENOID_ENABLE, 0);
 	if (result != 0)
@@ -315,6 +340,15 @@ static int DMGturret_init(void)
 		goto fail;
 	}
 	step_motor_state = !(GPIO_OUTPUT_ON(STEP_MOTOR_ENABLE)); /*XXX: Should be taken care of with gpio_direction_output...*/
+	feedback_irq = IRQ_GPIO(STEP_MOTOR_FEEDBACK);
+	if (request_irq(feedback_irq, &turret_prime_stop, SA_INTERRUPT | SA_TRIGGER_RISING, DEV_NAME, NULL) != 0) {
+		printk("Feedback irq not acquired \n");
+		goto fail;
+	}
+	else
+	{
+		printk("Feedback irq %d acquired successfully \n", feedback_irq);
+	}	
 
 	/* Allocate Write Buffer Memory */
 	write_buffer = kmalloc(WRITE_BUFFER_SIZE, GFP_KERNEL);
@@ -414,20 +448,26 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 		switch (write_buffer[0])
 		{
 		case 'F':
+			if (!solenoid_state && current_turret_state == TURRET_READY) {
 #ifdef SIM_MODE
-			printk(KERN_INFO "Solenoid Activated...\n");			
+				printk(KERN_INFO "Solenoid Activated...\n");			
 #endif
-			solenoid_state = GPIO_OUTPUT_ON(SOLENOID_ENABLE);
-			mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(2000));
-			success = true;
+				solenoid_state = GPIO_OUTPUT_ON(SOLENOID_ENABLE);
+				mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(2000));
+				current_turret_state = TURRET_FIRING;
+				success = true;
+			}
 			break;
 		case 'P':
+			if (current_turret_state == TURRET_STANDBY) {
 #ifdef SIM_MODE
-			printk(KERN_INFO "Stepper Motor Activated...\n");
+				printk(KERN_INFO "Stepper Motor Activated...\n");
 #endif
-			step_motor_state = !(GPIO_OUTPUT_OFF(STEP_MOTOR_ENABLE));
-			mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(4000));
-			success = true;
+				step_motor_state = !(GPIO_OUTPUT_OFF(STEP_MOTOR_ENABLE));
+				mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(10000)); /* Added for safety */
+				current_turret_state = TURRET_PRIMING;
+				success = true;
+			}
 			break;
 		case 'D':
 			success = set_pulse_width(tilt_servo_pulse + value * PULSE_GRANULARITY, 't');
@@ -480,11 +520,13 @@ DMGturret_exit(void)
 	GPIO_OUTPUT_OFF(STEP_MOTOR_DIRECTION);
 	GPIO_OUTPUT_OFF(STEP_MOTOR_ENABLE);
 	GPIO_OUTPUT_OFF(SOLENOID_ENABLE);
+	free_irq(IRQ_GPIO(STEP_MOTOR_FEEDBACK), NULL);
 	gpio_free(PAN_SERVO);
 	gpio_free(TILT_SERVO);
 	gpio_free(STEP_MOTOR_DRIVE);
 	gpio_free(STEP_MOTOR_DIRECTION);
 	gpio_free(STEP_MOTOR_ENABLE);
+	gpio_free(STEP_MOTOR_FEEDBACK);
 	gpio_free(SOLENOID_ENABLE);
 
 	/* Release OS Timer */
