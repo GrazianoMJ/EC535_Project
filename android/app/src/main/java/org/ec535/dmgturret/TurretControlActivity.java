@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcelable;
@@ -18,8 +19,6 @@ import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.support.annotation.NonNull;
 import android.support.annotation.RequiresApi;
-import android.support.design.widget.FloatingActionButton;
-import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
@@ -29,10 +28,10 @@ import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.UUID;
@@ -46,17 +45,20 @@ public class TurretControlActivity extends AppCompatActivity
     private Intent mSpeechIntent;
     private boolean mTurrentConnected;
     private boolean mTurrentDiscovered;
+    private boolean mCmdButtonIsUp = true;
+    private boolean mHasEarlyResults = false;
     private SpeechRecognizer mSpeechRecognizer;
     private BluetoothAdapter mBluetoothAdapter;
     private BluetoothDevice mTurretBluetoothDevice;
     private BluetoothClient mBluetoothClient;
     private BluetoothConnector mBluetoothConnector;
-    private static final String TURRET_MAC_ADDRESS = "E8:2A:EA:4A:04:FB";
+    private ArrayList<String> mVoiceCaptures;
+    // TODO: Don't rely on hardcoding MAC address
+    private static final String TURRET_MAC_ADDRESS = "00:03:19:50:28:AE";
     private static final int REQUEST_ENABLE_BT_ID = 299;
     private static final int PERMISSIONS_REQUEST_RECORD_AUDIO_ID = 300;
     private static final UUID TURRET_UUID = UUID.fromString("ce025ea4-00d6-44f3-ae1c-a5cba97381fd");
     private static final String TAG = TurretControlActivity.class.getName();
-
 
 
     private ArrayList<BluetoothDevice> mDeviceList = new ArrayList<>();
@@ -85,11 +87,15 @@ public class TurretControlActivity extends AppCompatActivity
                         if (dev.getAddress().equals(TURRET_MAC_ADDRESS)) {
                             mTurretBluetoothDevice = dev;
                             mTurrentDiscovered = true;
-                            //pairWithTurret();
                             connectToTurret();
                             break;
                         }
                     }
+
+                }
+                if (!mTurrentDiscovered) {
+                    mToast.setText("Turret not found!");
+                    mToast.show();
                 }
             } else if (BluetoothDevice.ACTION_UUID.equals(action)) {
                 Log.d(TAG, "SDP asysnc call results ready");
@@ -114,40 +120,6 @@ public class TurretControlActivity extends AppCompatActivity
                     boolean result = device.fetchUuidsWithSdp();
                 }
 
-            } else if (BluetoothDevice.ACTION_PAIRING_REQUEST.equals(action)) {
-                BluetoothDevice device = intent.getParcelableExtra(
-                        BluetoothDevice.EXTRA_DEVICE);
-                int pin = intent.getIntExtra(
-                        "android.bluetooth.device.extra.PAIRING_KEY",
-                        1234);
-                Log.d(TAG, String.format(
-                        "Starting auto pairing with Turret with PIN %s...",
-                        intent.getIntExtra(
-                                "android.bluetooth.device.extra.PAIRING_KEY",
-                                1234)));
-                byte[] pinBytes;
-                pinBytes = ("" + pin).getBytes(StandardCharsets.UTF_8);
-                device.setPin(pinBytes);
-                device.setPairingConfirmation(true);
-                connectToTurret();
-            } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
-                BluetoothDevice device = intent.getParcelableExtra(
-                        BluetoothDevice.EXTRA_DEVICE);
-                int bondState = device.getBondState();
-                switch (bondState) {
-                    case BluetoothDevice.BOND_NONE:
-                        // TODO: reestablish bond
-                        Log.d(TAG, "Lost bond with turret");
-                        break;
-                    case BluetoothDevice.BOND_BONDING:
-                        Log.d(TAG, "Bonding with turret...");
-                        break;
-                    case BluetoothDevice.BOND_BONDED:
-                        // TODO: maybe check if we are already connected
-                        Log.d(TAG, "Bonded with turret");
-                        connectToTurret();
-                        break;
-                }
             }
         }
     };
@@ -166,7 +138,13 @@ public class TurretControlActivity extends AppCompatActivity
 
     @Override
     public void onConnectionFailed(String reason) {
-        // TODO: retry?
+        this.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mToast.setText("Failed to connect to turret");
+                mToast.show();
+            }
+        });
     }
 
     @Override
@@ -175,23 +153,16 @@ public class TurretControlActivity extends AppCompatActivity
         Log.d(TAG, String.format("Connected to turret %s:%s",
                 mTurretBluetoothDevice.getName(), mTurretBluetoothDevice.getAddress()));
         mBluetoothClient = new BluetoothClient(socket, mTurretBluetoothDevice, TAG);
-        mToast.setText("Connected to turret!");
-        mToast.show();
+        this.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mToast.setText("Connected to turret!");
+                mToast.show();
+            }
+        });
         Log.d(TAG, "Spawning bluetooth client thread..");
+        mTurrentConnected = true;
         mBluetoothClient.run();
-    }
-
-
-    @RequiresApi(api = Build.VERSION_CODES.KITKAT)
-    protected void pairWithTurret() {
-        if (mTurretBluetoothDevice == null)
-            return;
-        // pair with device
-        mToast.setText("Pairing with turret");
-        mToast.show();
-        mTurretBluetoothDevice.createBond();
-        mToast.setText("Pairing with turret complete");
-        mToast.show();
     }
 
     protected void connectToTurret() {
@@ -205,7 +176,7 @@ public class TurretControlActivity extends AppCompatActivity
         mBluetoothConnector.start();
     }
 
-    @SuppressLint("ShowToast")
+    @SuppressLint({"ShowToast", "ClickableViewAccessibility"})
     @RequiresApi(api = Build.VERSION_CODES.KITKAT)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -213,14 +184,37 @@ public class TurretControlActivity extends AppCompatActivity
         setContentView(R.layout.activity_main);
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
-
-        FloatingActionButton fab = findViewById(R.id.fab);
-        fab.setOnClickListener(new View.OnClickListener() {
+        final ImageButton cmdButton = findViewById(R.id.commandButton);
+        cmdButton.setImageResource(R.drawable.button_normal_small);
+        cmdButton.setOnClickListener(new View.OnClickListener() {
+            @SuppressLint("SetTextI18n")
             @Override
-            public void onClick(View view) {
-                Snackbar.make(view, "Replace with your own action",
-                        Snackbar.LENGTH_LONG)
-                        .setAction("Action", null).show();
+            public void onClick(View v) {
+                if (!mTurrentConnected) {
+                    mToast.setText("Turret not connected yet!");
+                    mToast.show();
+                    return;
+                }
+                if (mCmdButtonIsUp) {
+                    cmdButton.setImageResource(R.drawable.button_pressed_small);
+                    Log.d(TAG, "Command button pressed down");
+                    mSpeechRecognizer.startListening(mSpeechIntent);
+                    mTextBox.setText("[Waiting for command...]");
+                    mTextBox.setTextColor(Color.GRAY);
+                    mToast.setText("Say your command now...");
+                    mToast.show();
+                } else {
+                    cmdButton.setImageResource(R.drawable.button_normal_small);
+                    Log.d(TAG, "Command button released");
+                    mToast.setText("Processing your command...");
+                    mToast.show();
+                    if (mHasEarlyResults) {
+                        mHasEarlyResults = false;
+                        tryProcessVoiceInput(mVoiceCaptures);
+                    } else
+                        mSpeechRecognizer.stopListening();
+                }
+                mCmdButtonIsUp = !mCmdButtonIsUp;
             }
         });
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
@@ -271,8 +265,6 @@ public class TurretControlActivity extends AppCompatActivity
         IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
         filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
         filter.addAction(BluetoothDevice.ACTION_UUID);
-        filter.addAction(BluetoothDevice.ACTION_PAIRING_REQUEST);
-        filter.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
         registerReceiver(mBroadcastReceiver, filter);
         // Make sure bluetooth is enabled
         mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
@@ -321,20 +313,19 @@ public class TurretControlActivity extends AppCompatActivity
         mSpeechIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         mSpeechIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                1500);
+                150000);
         mSpeechIntent.putExtra(
                 RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                1500);
+                150000);
         mSpeechIntent.putExtra(
-                RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500
+                RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 150000
         );
-        mSpeechIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
-        mSpeechIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        mSpeechIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10);
+        //mSpeechIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         mSpeechRecognizer = SpeechRecognizer.createSpeechRecognizer(
                 getApplicationContext()
         );
         mSpeechRecognizer.setRecognitionListener(this);
-        mSpeechRecognizer.startListening(mSpeechIntent);
     }
 
     @Override
@@ -361,13 +352,11 @@ public class TurretControlActivity extends AppCompatActivity
     @Override
     protected void onPause() {
         super.onPause();
-        //mSpeechRecognizer.stopListening();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        //mSpeechRecognizer.startListening(mSpeechIntent);
     }
 
     @Override
@@ -445,7 +434,6 @@ public class TurretControlActivity extends AppCompatActivity
                 Log.d( TAG, String.format("Encountered error code %d\n", error));
                 break;
         }
-        mSpeechRecognizer.startListening(mSpeechIntent);
     }
 
     protected ArrayList<String> getWordList(ArrayList<String> sentenceList) {
@@ -470,25 +458,26 @@ public class TurretControlActivity extends AppCompatActivity
                 mTextBox.setText("Prime payload");
                 break;
             case TILT_UP:
-                mTextBox.setText(String.format("Tilt turret up by %d degree(s)",
+                mTextBox.setText(String.format("Tilt turret up by %d tick(s)",
                         cmd.getArgument()));
                 break;
             case TILT_DOWN:
-                mTextBox.setText(String.format("Tilt turret down by %d degree(s)",
+                mTextBox.setText(String.format("Tilt turret down by %d tick(s)",
                         cmd.getArgument()));
                 break;
             case ROTATE_LEFT:
-                mTextBox.setText(String.format("Rotate turret left by %d degree(s)",
+                mTextBox.setText(String.format("Rotate turret left by %d tick(s)",
                         cmd.getArgument()));
                 break;
             case ROTATE_RIGHT:
-                mTextBox.setText(String.format("Rotate turret right by %d degree(s)",
+                mTextBox.setText(String.format("Rotate turret right by %d tick(s)",
                         cmd.getArgument()));
                 break;
             case INVALID:
                 mTextBox.setText("Invalid command");
                 break;
         }
+        mTextBox.setTextColor(Color.BLACK);
         // send command to turret
         if (mBluetoothClient != null &&
                 cmd.getCommandName() != VoiceCommand.CommandName.INVALID) {
@@ -499,22 +488,23 @@ public class TurretControlActivity extends AppCompatActivity
     @Override
     public void onResults(Bundle results) {
         Log.d(TAG, "Speech capture results ready");
-        ArrayList<String> voiceCaptures = results.getStringArrayList(
+        mVoiceCaptures = results.getStringArrayList(
                 SpeechRecognizer.RESULTS_RECOGNITION
         );
         StringBuilder strBuilder = new StringBuilder();
-        if (voiceCaptures != null) {
-            for (int i = 0; i < voiceCaptures.size(); i++) {
+        if (mVoiceCaptures != null) {
+            for (int i = 0; i < mVoiceCaptures.size(); i++) {
                 Log.d(TAG, String.format("Word capture [%d]: %s\n",
-                        i + 1, voiceCaptures.get(i)));
+                        i + 1, mVoiceCaptures.get(i)));
                 if (strBuilder.length() > 0)
                     strBuilder.append(", ");
-                strBuilder.append(voiceCaptures.get(i));
+                strBuilder.append(mVoiceCaptures.get(i));
             }
         }
-        // mTextBox.setText(strBuilder.toString());
-        tryProcessVoiceInput(voiceCaptures);
-        mSpeechRecognizer.startListening(mSpeechIntent);
+        if (mCmdButtonIsUp)
+            tryProcessVoiceInput(mVoiceCaptures);
+        else
+            mHasEarlyResults = true;
     }
 
     protected void onDestroy() {

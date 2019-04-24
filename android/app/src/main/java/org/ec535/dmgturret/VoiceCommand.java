@@ -1,8 +1,12 @@
 package org.ec535.dmgturret;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 
 public class VoiceCommand {
+
+    public final static int MAX_TICK = 10;
+
     public enum CommandName {
         FIRE ((byte) 0),
         PRIME ((byte) 1),
@@ -23,14 +27,26 @@ public class VoiceCommand {
         }
     }
 
+    private static final HashMap numberMap = new HashMap<String, Integer>() {{
+        put("one", 1);
+        put("two", 2);
+        put("three", 3);
+        put("four", 4);
+        put("five", 5);
+        put("six", 6);
+        put("seven", 7);
+        put("eight", 8);
+        put("nine", 9);
+        put("ten", 10);
+    }};
+
+
     private static class CommandOp {
         private CommandName mCommandName;
         private boolean mIsValid;
 
         // this op location within the sentence
         private int mWordIndex;
-        // this op location within the sentence array
-        private int mSentenceIndex;
 
         public CommandOp() {
             // Null constructor
@@ -68,8 +84,8 @@ public class VoiceCommand {
         private int mArgument;
         // this argument's index within the word list
         private int mWordIndex;
-        private int mSentenceIndex;
-        boolean isValid;
+        private boolean isValid;
+
 
         public CommandArgument() {
             // Null constructor
@@ -86,10 +102,6 @@ public class VoiceCommand {
 
         public int getArgument() {
             return mArgument;
-        }
-
-        public int getWordIndex() {
-            return mWordIndex;
         }
 
         public boolean isValid() {
@@ -112,6 +124,10 @@ public class VoiceCommand {
         mCommandOp = op;
         mArgument = arg;
         isValid = false;
+    }
+
+    public boolean hasArgument() {
+        return mCommandOp.shouldHaveAnArgument();
     }
 
     public boolean isValid() {
@@ -163,8 +179,15 @@ public class VoiceCommand {
         for (wordIndex = beginIndex; wordIndex < stringList.size(); wordIndex++) {
             try {
                 argument = Integer.parseInt(stringList.get(wordIndex));
+                if (argument <= 0 || argument > MAX_TICK)
+                    argument = -1;
                 break;
-            } catch (NumberFormatException ignored) { }
+            } catch (NumberFormatException ignored) {
+                if (numberMap.containsKey(stringList.get(wordIndex))) {
+                    argument = (int)numberMap.get(stringList.get(wordIndex));
+                    break;
+                }
+            }
         }
         if (argument >= 0)
             return new CommandArgument(argument, wordIndex);
