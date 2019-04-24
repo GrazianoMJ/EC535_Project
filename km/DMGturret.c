@@ -215,25 +215,21 @@ handle_ost(int irq, void *dev_id)
 		case PWM_STATE_PAN_TO_TILT:
 			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
 			current_pwm_state = PWM_STATE_TILT_ONLY;
-			printk(KERN_INFO "PWM f p\n");
 			OSMR4 = tilt_servo_pulse - OSCR_TICS_TO_US(OSCR-pwm_start);
 			break;
 		case PWM_STATE_TILT_ONLY:
 			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			current_pwm_state = PWM_STATE_ALL_OFF;
-			printk(KERN_INFO "PWM f t\n");
 			OSMR4 = PWM_PERIOD - OSCR_TICS_TO_US(OSCR-pwm_start);
 			break;
 		case PWM_STATE_TILT_TO_PAN:
 			tilt_servo_state = GPIO_OUTPUT_OFF(TILT_SERVO);
 			current_pwm_state = PWM_STATE_PAN_ONLY;
-			printk(KERN_INFO "PWM f t\n");
 			OSMR4 = pan_servo_pulse - OSCR_TICS_TO_US(OSCR-pwm_start);
 			break;
 		case PWM_STATE_PAN_ONLY:
 			pan_servo_state = GPIO_OUTPUT_OFF(PAN_SERVO);
 			current_pwm_state = PWM_STATE_ALL_OFF;
-			printk(KERN_INFO "PWM f p\n");
 			OSMR4 = PWM_PERIOD - OSCR_TICS_TO_US(OSCR-pwm_start);
 			break;
 	}
