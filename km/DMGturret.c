@@ -88,12 +88,16 @@ static uint32_t pwm_period_remain = PWM_PERIOD;
 static struct timer_list hardware_timer;
 
 /* Holds the Pulse Width */
-#define MIN_PULSE (1000u) /* 1 ms */
-#define MAX_PULSE (2000u) /* 2 ms */
 #define PULSE_COUNT 10
-#define PULSE_GRANULARITY ((MAX_PULSE - MIN_PULSE) / PULSE_COUNT)
-#define PULSE_LENGTH(index) ((index) * PULSE_GRANULARITY + MIN_PULSE)
 #define DEFAULT_PULSE_INDEX (PULSE_COUNT / 2)
+#define MIN_PAN_PULSE (1000u) /* 1 ms */
+#define MAX_PAN_PULSE (2000u) /* 2 ms */
+#define MIN_TILT_PULSE (1300u) /* 1.3 ms */
+#define MAX_TILT_PULSE (1600u) /* 1.6 ms */
+#define PAN_PULSE_GRANULARITY ((MAX_PAN_PULSE - MIN_PAN_PULSE) / PULSE_COUNT)
+#define TILT_PULSE_GRANULARITY ((MAX_TILT_PULSE - MIN_TILT_PULSE) / PULSE_COUNT)
+#define PAN_PULSE_LENGTH(index) ((index) * PAN_PULSE_GRANULARITY + MIN_PAN_PULSE)
+#define TILT_PULSE_LENGTH(index) ((index) * TILT_PULSE_GRANULARITY + MIN_TILT_PULSE)
 
 /* Holds PWM State */
 typedef enum {
@@ -256,23 +260,25 @@ parse_uint(const char* buf, uint32_t* num)
 static bool
 set_pulse_width(uint32_t width, char servo)
 {
-	width = min(MAX_PULSE, max(MIN_PULSE, width));
-#ifdef SIM_MODE
-	printk(KERN_INFO "Set %c: %d\n", servo, width);
-#endif
-	if (width < MIN_PULSE || width > MAX_PULSE || (servo != 'p' && servo != 't'))
+	if (servo == 'p' && width >= MIN_PAN_PULSE && width <= MAX_PAN_PULSE)
+	{
+		width = min(MAX_PAN_PULSE, max(MIN_PAN_PULSE, width));
+		pan_servo_pulse = width;
+	}
+	else if (servo == 't' && width >= MIN_TILT_PULSE && width <= MAX_TILT_PULSE)
+	{
+		width = min(MAX_TILT_PULSE, max(MIN_TILT_PULSE, width));
+		tilt_servo_pulse = width;
+	}
+	else
 	{
 		return false;
 	}
 
-	if (servo == 'p')
-	{
-		pan_servo_pulse = width;
-	}
-	else if (servo == 't')
-	{
-		tilt_servo_pulse = width;
-	}
+#ifdef SIM_MODE
+	printk(KERN_INFO "Set %c: %d\n", servo, width);
+#endif
+
 	return true;
 }
 
@@ -371,8 +377,8 @@ static int DMGturret_init(void)
 	read_len = 0;
 
 	/* Center the servos */
-	pan_servo_pulse = PULSE_LENGTH(DEFAULT_PULSE_INDEX);
-	tilt_servo_pulse = PULSE_LENGTH(DEFAULT_PULSE_INDEX);
+	pan_servo_pulse = PAN_PULSE_LENGTH(DEFAULT_PULSE_INDEX);
+	tilt_servo_pulse = TILT_PULSE_LENGTH(DEFAULT_PULSE_INDEX);
 
 	/* Initialize OS Timer for Pulse Width Modulation */
 	if (request_irq(IRQ_OST_4_11, &handle_ost, 0, DEV_NAME, NULL) != 0) {
@@ -470,16 +476,16 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 			}
 			break;
 		case 'D':
-			success = set_pulse_width(tilt_servo_pulse + value * PULSE_GRANULARITY, 't');
+			success = set_pulse_width(tilt_servo_pulse - value * TILT_PULSE_GRANULARITY, 't');
 			break;
 		case 'U':
-			success = set_pulse_width(tilt_servo_pulse - value * PULSE_GRANULARITY, 't');
+			success = set_pulse_width(tilt_servo_pulse + value * TILT_PULSE_GRANULARITY, 't');
 			break;
 		case 'L':
-			success = set_pulse_width(pan_servo_pulse - value * PULSE_GRANULARITY, 'p');
+			success = set_pulse_width(pan_servo_pulse - value * PAN_PULSE_GRANULARITY, 'p');
 			break;
 		case 'R':
-			success = set_pulse_width(pan_servo_pulse + value * PULSE_GRANULARITY, 'p');
+			success = set_pulse_width(pan_servo_pulse + value * PAN_PULSE_GRANULARITY, 'p');
 			break;
 		}
 		if (!success)
