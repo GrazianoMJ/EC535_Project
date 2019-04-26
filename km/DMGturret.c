@@ -204,6 +204,7 @@ handle_ost(int irq, void *dev_id)
 				    (pan_servo_pulse > tilt_servo_pulse) ? PWM_STATE_TILT_TO_PAN : PWM_STATE_EQUAL_ON;
 			pan_servo_state = GPIO_OUTPUT_ON(PAN_SERVO);
 			tilt_servo_state = GPIO_OUTPUT_ON(TILT_SERVO);
+			step_motor_state = (step_motor_state) ? GPIO_OUTPUT_OFF(STEP_MOTOR_DRIVE) : GPIO_OUTPUT_ON(STEP_MOTOR_DRIVE);
 			OSMR4 = (pan_servo_pulse < tilt_servo_pulse) ? pan_servo_pulse : tilt_servo_pulse;
 			break;
 		case PWM_STATE_EQUAL_ON: 
@@ -289,7 +290,7 @@ hardware_timer_callback(unsigned long data)
 #ifdef SIM_MODE
 		printk(KERN_INFO "...solenoid now off after 2 seconds\n");
 #endif
-		solenoid_state = GPIO_OUTPUT_OFF(SOLENOID_ENABLE);
+		solenoid_state = !(GPIO_OUTPUT_OFF(SOLENOID_ENABLE));
 		current_turret_state = TURRET_STANDBY;
 	}
 	else if (current_turret_state == TURRET_PRIMING) {
@@ -339,12 +340,14 @@ static int DMGturret_init(void)
 		|| gpio_direction_output(STEP_MOTOR_ENABLE, 1) /* Enable is assert low to activate */
 		|| gpio_direction_output(STEP_MOTOR_DIRECTION, 0)
 		|| gpio_direction_input(STEP_MOTOR_FEEDBACK)
-		|| step_motor_pwm_setup(STEP_MOTOR_DRIVE)
+//		|| step_motor_pwm_setup(STEP_MOTOR_DRIVE)
+		|| gpio_direction_output(STEP_MOTOR_DRIVE, 0)
 		|| gpio_direction_output(SOLENOID_ENABLE, 0);
 	if (result != 0)
 	{
 		goto fail;
 	}
+	solenoid_state = !(GPIO_OUTPUT_ON(SOLENOID_ENABLE)); /*XXX: Should be taken care of with gpio_direction_output...*/
 	step_motor_state = !(GPIO_OUTPUT_ON(STEP_MOTOR_ENABLE)); /*XXX: Should be taken care of with gpio_direction_output...*/
 	feedback_irq = IRQ_GPIO(STEP_MOTOR_FEEDBACK);
 	if (request_irq(feedback_irq, &turret_prime_stop, SA_INTERRUPT | SA_TRIGGER_RISING, DEV_NAME, NULL) != 0) {
@@ -458,7 +461,7 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 #ifdef SIM_MODE
 				printk(KERN_INFO "Solenoid Activated...\n");			
 #endif
-				solenoid_state = GPIO_OUTPUT_ON(SOLENOID_ENABLE);
+				solenoid_state = !(GPIO_OUTPUT_ON(SOLENOID_ENABLE));
 				mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(2000));
 				current_turret_state = TURRET_FIRING;
 				success = true;
@@ -522,7 +525,8 @@ DMGturret_exit(void)
 	/* Turn Off & Release GPIO */
 	GPIO_OUTPUT_OFF(PAN_SERVO);
 	GPIO_OUTPUT_OFF(TILT_SERVO);
-	step_motor_release(STEP_MOTOR_DRIVE);
+//	step_motor_release(STEP_MOTOR_DRIVE);
+	GPIO_OUTPUT_OFF(STEP_MOTOR_DRIVE);
 	GPIO_OUTPUT_OFF(STEP_MOTOR_DIRECTION);
 	GPIO_OUTPUT_OFF(STEP_MOTOR_ENABLE);
 	GPIO_OUTPUT_OFF(SOLENOID_ENABLE);
