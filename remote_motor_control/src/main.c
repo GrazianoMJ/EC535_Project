@@ -39,17 +39,20 @@ parse_message(const unsigned char* message, size_t message_size)
 	struct Command cmd = { .command_type = INVALID_COMMAND, .magnitude = 0 };
 	if (message_size == 2)
 	{
+		char arg1 = message[1];
 		switch(message[0])
 		{
 		case 0:
 		case 1:
 			/* message[1] is don't-care for the first two command types */
+			arg1 = 0;
+			/* fall-through */
 		case 2:
 		case 3:
 		case 4:
 		case 5:
 			cmd.command_type = command_map[message[0]];
-			cmd.magnitude = message[1];
+			cmd.magnitude = arg1;
 			break;
 		}
 	}
@@ -69,23 +72,15 @@ recv_msg(const unsigned char* message, size_t message_size)
 		return -1;
 	}
 
-	write_count = snprintf(buf, BUF_SIZE, "%c", cmd.command_type);
-	switch (cmd.command_type)
+	write_count = snprintf(buf, BUF_SIZE, "%c%u\n", cmd.command_type, cmd.magnitude);
+	if (write_count >= BUF_SIZE)
 	{
-	case 'L':
-	case 'R':
-	case 'U':
-	case 'D':
-		write_count += snprintf(buf + write_count, BUF_SIZE - write_count, "%u", cmd.magnitude);
-		if (write_count >= BUF_SIZE)
-		{
-			fprintf(stderr, "Unable to format command for message %.*s\n",
-					(int)message_size, message);
-			return -1;
-		}
-		break;
+		fprintf(stderr, "Unable to format command for message %.*s\n",
+				(int)message_size, message);
+		return -1;
 	}
 
+	printf("Writing %d bytes: '%.*s'\n", write_count, write_count, buf);
 	write_count = write(control_fd, buf, write_count);
 	if (write_count == -1)
 	{
