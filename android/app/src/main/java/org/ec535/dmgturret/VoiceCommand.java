@@ -163,7 +163,8 @@ public class VoiceCommand {
                 return new CommandOp(CommandName.TILT_DOWN, wordIndex);
             else if (stringList.get(wordIndex).toLowerCase().contains("left"))
                 return new CommandOp(CommandName.ROTATE_LEFT, wordIndex);
-            else if (stringList.get(wordIndex).toLowerCase().contains("right"))
+            else if (stringList.get(wordIndex).toLowerCase().contains("right") ||
+                    stringList.get(wordIndex).toLowerCase().contains("write"))
                 return new CommandOp(CommandName.ROTATE_RIGHT, wordIndex);
         }
         return new CommandOp();
