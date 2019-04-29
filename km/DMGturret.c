@@ -18,6 +18,9 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define READ_BUFFER_SIZE (128)
 #define DEV_NAME "DMGturret"
 #define PWM_PERIOD 20000 /* 20 ms in us */
+#define PRIME_TIME_MS 20000
+
+/* GPIO Pins */
 #define STEP_MOTOR_DRIVE 16
 #define STEP_MOTOR_DIRECTION 113
 #define STEP_MOTOR_ENABLE 9  
@@ -25,7 +28,12 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define PAN_SERVO 29
 #define TILT_SERVO 30
 #define SOLENOID_ENABLE 31
-#define OIER_E4 (1 << 4) /* pxa-regs.h only gives us OIER_E0 - 3 */
+
+/*
+ * OS Timer 4 enable
+ * pxa-regs.h only gives us OIER_E0 - 3
+ */
+#define OIER_E4 (1 << 4)
 
 /* Declare Function Prototypes - Module File Operations */
 static int DMGturret_init(void);
@@ -347,7 +355,6 @@ static int DMGturret_init(void)
 	{
 		goto fail;
 	}
-	solenoid_state = !(GPIO_OUTPUT_ON(SOLENOID_ENABLE)); /*XXX: Should be taken care of with gpio_direction_output...*/
 	step_motor_state = !(GPIO_OUTPUT_ON(STEP_MOTOR_ENABLE)); /*XXX: Should be taken care of with gpio_direction_output...*/
 	feedback_irq = IRQ_GPIO(STEP_MOTOR_FEEDBACK);
 	if (request_irq(feedback_irq, &turret_prime_stop, SA_INTERRUPT | SA_TRIGGER_RISING, DEV_NAME, NULL) != 0) {
@@ -461,7 +468,7 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 #ifdef SIM_MODE
 				printk(KERN_INFO "Solenoid Activated...\n");			
 #endif
-				solenoid_state = !(GPIO_OUTPUT_ON(SOLENOID_ENABLE));
+				solenoid_state = !(GPIO_OUTPUT_OFF(SOLENOID_ENABLE));
 				mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(2000));
 				current_turret_state = TURRET_FIRING;
 				success = true;
@@ -472,8 +479,9 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 #ifdef SIM_MODE
 				printk(KERN_INFO "Stepper Motor Activated...\n");
 #endif
+				solenoid_state = !(GPIO_OUTPUT_ON(SOLENOID_ENABLE));
 				step_motor_state = !(GPIO_OUTPUT_OFF(STEP_MOTOR_ENABLE));
-				mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(10000)); /* Added for safety */
+				mod_timer(&hardware_timer, jiffies + msecs_to_jiffies(PRIME_TIME_MS)); /* Added for safety */
 				current_turret_state = TURRET_PRIMING;
 				success = true;
 			}
@@ -485,10 +493,10 @@ DMGturret_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 			success = set_pulse_width(tilt_servo_pulse + value * TILT_PULSE_GRANULARITY, 't');
 			break;
 		case 'L':
-			success = set_pulse_width(pan_servo_pulse - value * PAN_PULSE_GRANULARITY, 'p');
+			success = set_pulse_width(pan_servo_pulse + value * PAN_PULSE_GRANULARITY, 'p');
 			break;
 		case 'R':
-			success = set_pulse_width(pan_servo_pulse + value * PAN_PULSE_GRANULARITY, 'p');
+			success = set_pulse_width(pan_servo_pulse - value * PAN_PULSE_GRANULARITY, 'p');
 			break;
 		}
 		if (!success)
