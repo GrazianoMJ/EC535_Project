@@ -80,7 +80,7 @@ recv_msg(const unsigned char* message, size_t message_size)
 		return -1;
 	}
 
-	printf("Writing %d bytes: '%.*s'\n", write_count, write_count, buf);
+	printf("Writing %d bytes: '%.*s'\n", (int)write_count, (int)write_count, buf);
 	write_count = write(control_fd, buf, write_count);
 	if (write_count == -1)
 	{
@@ -155,7 +155,7 @@ run_tests(void)
 		recv_msg((unsigned char[]){0, 0}, 2);
 		lseek(control_fd, 0, SEEK_SET);
 		fake_dev_file_size = read(control_fd, fake_dev_file, FAKE_DEV_FILE_BUF_SIZE);
-		assert(fake_dev_file_size == 1);
+		assert(fake_dev_file_size == 3);
 		assert(fake_dev_file[0] == 'F');
 
 		// Left
@@ -164,7 +164,7 @@ run_tests(void)
 		recv_msg((unsigned char[]){4, 0x10}, 2);
 		lseek(control_fd, 0, SEEK_SET);
 		fake_dev_file_size = read(control_fd, fake_dev_file, FAKE_DEV_FILE_BUF_SIZE);
-		assert(fake_dev_file_size == 3);
+		assert(fake_dev_file_size == 4);
 		assert(fake_dev_file[0] == 'L');
 		assert(fake_dev_file[1] == '1');
 		assert(fake_dev_file[2] == '6');
