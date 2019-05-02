@@ -34,3 +34,10 @@ Run `./emulate.sh` to build the Gumstix software for an emulation environment. I
 If it cannot find any dependencies (e.g. rootfs), it will print a message stating where to put the dependency, and offer an environment variable that can be used to specify an existing instance of the dependency to reuse from elsewhere. The environment variable can be useful to reuse rootfs across multiple homework/lab assignments and this project.
 
 ## Building and running the Android software
+The TurretControl Android project was built using Android Studio. Detailed instructions on how to install Android Studio can be found at this link https://developer.android.com/studio/install.
+
+After Android installed, follow steps listed below to configure and build the TurretControl Application.
+
+1. Import the `android/build.gradle` using Android Studio to open the project
+2. Connect an Android phone with `usb debugging` enabled (https://developer.android.com/studio/debug/dev-options provides a step-by-step).
+3. Run the project to install the android application on the Android phone. 
