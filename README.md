@@ -1,4 +1,21 @@
 # EC535_Project
+The following steps are needed to configure and run this project:
+
+1. Connect the external hardware
+2. Start the Gumstix
+3. Build, install, and run the Gumstix software
+4. Build, install, and run the Android software
+
+
+## Connecting external hardware
+The following connections are used:
+ - GPIO 16: EasyDriver Step input
+ - GPIO 113: EasyDriver Direction input
+ - GPIO 9: EasyDriver Enable input
+ - GPIO 28: Snap-action switch (NC-Hot, NO-cold)
+ - GPIO 31: MOSFET control for the solenoid
+ - GPIO 30: Tilt servo signal pin
+ - GPIO 29: Pan servo signal pin
 
 ## Running software on the Gumstix
  - Run `make -C km` to build the kernel module. The resulting module will be at `km/DMGturret.ko`
