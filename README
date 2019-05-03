@@ -6,6 +6,7 @@ The following steps are needed to configure and run this project:
 3. Build, install, and run the Gumstix software
 4. Build, install, and run the Android software
 
+Alternatively, the bluetooth server can run on a development machine for self-testing.
 
 ## Connecting external hardware
 The following connections are used:
@@ -19,25 +20,54 @@ The following connections are used:
 
 ## Running software on the Gumstix
  - Run `make -C km` to build the kernel module. The resulting module will be at `km/DMGturret.ko`
- - Run `make -C remote_motor_control` to build the bluetooth server. The resulting program will be at `remote_motor_control/remote_motor_control`
+ - Run `make -C remote_motor_control` to build the bluetooth server. The resulting program will be
+   at `remote_motor_control/remote_motor_control`
 
 Copy the two output files to the Gumstix device (e.g. with lrz zmodem). Then:
  - Install the kernel module with `insmod DMGturret.ko`
  - Add a device node: `mknod /dev/motor_control c 61 0`
  - Start the bluetooth server: `./remote_motor_control &`
  
-The bluetooth server is running and ready to accept connections from clients. Only one client at a time is accepted, but the server does not need to restart between client connections.
+The bluetooth server is running and ready to accept connections from clients. Only one client at a
+time is accepted, but the server does not need to restart between client connections.
 
 ### Running emulated Gumstix software
-Run `./emulate.sh` to build the Gumstix software for an emulation environment. It will copy the software to rootfs and start qemu.
+Run `./emulate.sh` to build the Gumstix software for an emulation environment. It will copy the
+software to rootfs and start qemu.
 
-If it cannot find any dependencies (e.g. rootfs), it will print a message stating where to put the dependency, and offer an environment variable that can be used to specify an existing instance of the dependency to reuse from elsewhere. The environment variable can be useful to reuse rootfs across multiple homework/lab assignments and this project.
+If it cannot find any dependencies (e.g. rootfs), it will print a message stating where to put
+the dependency, and offer an environment variable that can be used to specify an existing
+instance of the dependency to reuse from elsewhere. The environment variable can be useful to
+reuse rootfs across multiple homework/lab assignments and this project.
 
 ## Building and running the Android software
-The TurretControl Android project was built using Android Studio. Detailed instructions on how to install Android Studio can be found at this link https://developer.android.com/studio/install.
+The TurretControl Android project was built using Android Studio. Detailed instructions on how
+to install Android Studio can be found at this link https://developer.android.com/studio/install.
 
 After Android installed, follow steps listed below to configure and build the TurretControl Application.
 
 1. Import the `android/build.gradle` using Android Studio to open the project
 2. Connect an Android phone with `usb debugging` enabled (https://developer.android.com/studio/debug/dev-options provides a step-by-step).
 3. Run the project to install the android application on the Android phone. 
+
+## Testing the bluetooth server without the Gumstix
+To run the bluetooth server's unit tests:
+
+1. run `make TARGET=local SELF_TEST=1` on a development machine that has the BlueZ
+   library and headers installed.
+2. Execute the tests by running `remote_motor_control`. If they succeed, it will
+   print “Self tests pass!” If they fail, it will print an assertion describing
+   the nature of the failure and its location in the self-test code.
+
+The Bluetooth server can also be executed on a development machine to aid integration testing
+between the Android application and the Bluetooth server when the Gumstix board is not available.
+To build the local testing variant, run make TARGET=local on a development machine that has the
+BlueZ library and headers installed. Either create a temporary file or something with a file-like
+interface at /dev/motor_control, and run the server on a development machine by executing
+remote_motor_control. Verify behavior during testing by monitoring the contents of the file at
+/dev/motor_control. 
+
+Before integrating with the Android application, the Bluetooth server’s service broadcast and
+message receiving functionality can be verified by running the included reference_client.py script
+on another Bluetooth-enabled machine nearby. The script can be modified to send any sequence of
+commands to the Bluetooth server.
