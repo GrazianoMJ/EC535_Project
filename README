@@ -41,14 +41,15 @@ instance of the dependency to reuse from elsewhere. The environment variable can
 reuse rootfs across multiple homework/lab assignments and this project.
 
 ## Building and running the Android software
-The TurretControl Android project was built using Android Studio. Detailed instructions on how
-to install Android Studio can be found at this link https://developer.android.com/studio/install.
+The TurretControl Android project was built using Android Studio. 
+Detailed instructions on how to install Android Studio can be found at this link https://developer.android.com/studio/install.
+After Android Studio is installed, follow the steps listed below to configure and build the TurretControl Application.
 
-After Android installed, follow steps listed below to configure and build the TurretControl Application.
-
-1. Import the `android/build.gradle` using Android Studio to open the project
-2. Connect an Android phone with `usb debugging` enabled (https://developer.android.com/studio/debug/dev-options provides a step-by-step).
-3. Run the project to install the android application on the Android phone. 
+1. Import the `android/build.gradle` using Android Studio to open the project.
+2. Connect an Android phone via USB to the computer running the Android Studio with `USB debugging` enabled (https://developer.android.com/studio/debug/dev-options provides a step-by-step on how to enable USB debugging).
+3. Set the correct MAC address to the device running the Bluetooth server (address string located in `android/app/src/main/java/org/ec535/dmgturret/TurretControlActivity.java` line 57).
+4. Set the correct UUID of the Bluetooth server (UUID string located in `android/app/src/main/java/org/ec535/dmgturret/TurretControlActivity.java` line 60).
+5. Run (or Debug) the project to install the android application on the Android phone. 
 
 ## Testing the bluetooth server without the Gumstix
 To run the bluetooth server's unit tests:
