@@ -71,3 +71,11 @@ Before integrating with the Android application, the Bluetooth server’s servic
 message receiving functionality can be verified by running the included reference_client.py script
 on another Bluetooth-enabled machine nearby. The script can be modified to send any sequence of
 commands to the Bluetooth server.
+
+Environment Note:
+If your development environment has a BlueZ version that is significantly newer than the one
+used by Gumstix, you may need to enable BlueZ compatibility mode on your development machine.
+If it is managed by systemd on your machine, modify /etc/systemd/system/dbus-org.bluez.service
+to have the following start line: ExecStart=/usr/lib/bluetooth/bluetoothd --compat. Since the
+server registers an SDP service, you will either need to give your test user write access to
+/var/run/sdp, or run the test as root.
